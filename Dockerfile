@@ -9,7 +9,8 @@ COPY package*.json ./
 COPY tsconfig.json ./
 
 # Instala todas as dependências (incluindo dev para build)
-RUN npm ci
+# Usa npm ci para instalação limpa, com fallback para npm install se lock file estiver desatualizado
+RUN npm ci || (echo "⚠️ npm ci falhou, usando npm install..." && npm install)
 
 # Copia o código fonte
 COPY index.ts ./

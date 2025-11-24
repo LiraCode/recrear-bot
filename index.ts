@@ -1,14 +1,50 @@
-import TelegramBot from 'node-telegram-bot-api';
+import 'dotenv/config';
+import { Telegraf, Markup } from 'telegraf';
 import { MongoClient, ObjectId } from 'mongodb';
 import { google } from 'googleapis';
 import cron from 'node-cron';
 
 // ==================== CONFIGURAÇÕES ====================
-const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
-const MONGODB_URI = process.env.MONGODB_URI!;
-const GOOGLE_CREDENTIALS = JSON.parse(process.env.GOOGLE_CREDENTIALS!);
+const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const MONGODB_URI = process.env.MONGODB_URI;
+const GOOGLE_CREDENTIALS_STR = process.env.GOOGLE_CREDENTIALS;
 const BACKOFFICE_URL = 'https://backoffice.recrearnolar.com.br';
-const ADMIN_CHAT_ID = parseInt(process.env.ADMIN_CHAT_ID!);
+const ADMIN_CHAT_ID_STR = process.env.ADMIN_CHAT_ID;
+
+// Validação de variáveis de ambiente
+if (!TELEGRAM_TOKEN) {
+  console.error('❌ Erro: TELEGRAM_BOT_TOKEN não está definido');
+  process.exit(1);
+}
+
+if (!MONGODB_URI) {
+  console.error('❌ Erro: MONGODB_URI não está definido');
+  process.exit(1);
+}
+
+if (!GOOGLE_CREDENTIALS_STR) {
+  console.error('❌ Erro: GOOGLE_CREDENTIALS não está definido');
+  process.exit(1);
+}
+
+if (!ADMIN_CHAT_ID_STR) {
+  console.error('❌ Erro: ADMIN_CHAT_ID não está definido');
+  process.exit(1);
+}
+
+let GOOGLE_CREDENTIALS: any;
+try {
+  GOOGLE_CREDENTIALS = JSON.parse(GOOGLE_CREDENTIALS_STR);
+} catch (error) {
+  console.error('❌ Erro ao fazer parse de GOOGLE_CREDENTIALS:', error);
+  process.exit(1);
+}
+
+const ADMIN_CHAT_ID = parseInt(ADMIN_CHAT_ID_STR);
+if (isNaN(ADMIN_CHAT_ID)) {
+  console.error('❌ Erro: ADMIN_CHAT_ID não é um número válido');
+  process.exit(1);
+}
 
 // ==================== TYPES ====================
 interface Pacote {
@@ -81,7 +117,7 @@ interface Orcamento {
 }
 
 // ==================== INICIALIZAÇÃO ====================
-const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+const bot = new Telegraf(TELEGRAM_TOKEN);
 const mongoClient = new MongoClient(MONGODB_URI);
 let db: any;
 
@@ -199,17 +235,15 @@ function calcularValorOrcamento(orcamento: Partial<Orcamento>): number {
 }
 
 // ==================== COMANDOS - MENU PRINCIPAL ====================
-bot.onText(/\/start/, (msg) => {
-  const chatId = msg.chat.id;
-  bot.sendMessage(chatId, 
+bot.command('start', (ctx) => {
+  ctx.reply(
     '🎉 *Bem-vindo ao Bot Recrear no Lar!*\n\n' +
     'Use /ajuda para ver todos os comandos disponíveis.',
     { parse_mode: 'Markdown' }
   );
 });
 
-bot.onText(/\/ajuda/, (msg) => {
-  const chatId = msg.chat.id;
+bot.command('ajuda', (ctx) => {
   const helpText = `
 📋 *COMANDOS DISPONÍVEIS*
 
@@ -247,30 +281,30 @@ bot.onText(/\/ajuda/, (msg) => {
 /ajuda - Esta mensagem
   `;
   
-  bot.sendMessage(chatId, helpText, { parse_mode: 'Markdown' });
+  ctx.reply(helpText, { parse_mode: 'Markdown' });
 });
 
 // ==================== PAGAMENTOS ====================
-bot.onText(/\/buscar_pagamento/, async (msg) => {
-  const chatId = msg.chat.id;
+bot.command('buscar_pagamento', async (ctx) => {
+  const chatId = ctx.chat.id;
   userStates.set(chatId, { command: 'buscar_pagamento', step: 'vencimento' });
-  bot.sendMessage(chatId, '📅 Digite a data de vencimento (formato: DD/MM/AAAA):');
+  ctx.reply('📅 Digite a data de vencimento (formato: DD/MM/AAAA):');
 });
 
-bot.onText(/\/registrar_pagamento/, async (msg) => {
-  const chatId = msg.chat.id;
+bot.command('registrar_pagamento', async (ctx) => {
+  const chatId = ctx.chat.id;
   userStates.set(chatId, { command: 'registrar_pagamento', step: 'vencimento' });
-  bot.sendMessage(chatId, '📅 Digite a data de vencimento (formato: DD/MM/AAAA):');
+  ctx.reply('📅 Digite a data de vencimento (formato: DD/MM/AAAA):');
 });
 
-bot.onText(/\/pagamentos_pendentes/, async (msg) => {
-  const chatId = msg.chat.id;
+bot.command('pagamentos_pendentes', async (ctx) => {
+  const chatId = ctx.chat.id;
   
   try {
     const pacotes = await db.collection('pacotes').find({ isPaid: false }).toArray();
     
     if (pacotes.length === 0) {
-      bot.sendMessage(chatId, '✅ Não há pagamentos pendentes!');
+      ctx.reply('✅ Não há pagamentos pendentes!');
       return;
     }
     
@@ -285,152 +319,140 @@ bot.onText(/\/pagamentos_pendentes/, async (msg) => {
       message += '---\n';
     }
     
-    bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+    ctx.reply(message, { parse_mode: 'Markdown' });
   } catch (error) {
-    bot.sendMessage(chatId, '❌ Erro ao buscar pagamentos pendentes.');
+    ctx.reply('❌ Erro ao buscar pagamentos pendentes.');
     console.error(error);
   }
 });
 
 // ==================== AGENDAMENTOS ====================
-bot.onText(/\/criar_agendamento/, (msg) => {
-  const chatId = msg.chat.id;
+bot.command('criar_agendamento', (ctx) => {
+  const chatId = ctx.chat.id;
   
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: '🎉 Evento', callback_data: 'ag_tipo_evento' }],
-      [{ text: '🎈 Festa', callback_data: 'ag_tipo_festa' }],
-      [{ text: '📦 Pacote', callback_data: 'ag_tipo_pacote' }],
-      [{ text: '👤 Pessoal', callback_data: 'ag_tipo_pessoal' }]
-    ]
-  };
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback('🎉 Evento', 'ag_tipo_evento')],
+    [Markup.button.callback('🎈 Festa', 'ag_tipo_festa')],
+    [Markup.button.callback('📦 Pacote', 'ag_tipo_pacote')],
+    [Markup.button.callback('👤 Pessoal', 'ag_tipo_pessoal')]
+  ]);
   
   userStates.set(chatId, { command: 'criar_agendamento', data: {} });
-  bot.sendMessage(chatId, 'Selecione o tipo de agendamento:', { reply_markup: keyboard });
+  ctx.reply('Selecione o tipo de agendamento:', keyboard);
 });
 
-bot.onText(/\/listar_agendamentos/, (msg) => {
-  const chatId = msg.chat.id;
+bot.command('listar_agendamentos', (ctx) => {
+  const chatId = ctx.chat.id;
   
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: '📅 Hoje', callback_data: 'list_ag_hoje' }],
-      [{ text: '📆 Esta semana', callback_data: 'list_ag_semana' }],
-      [{ text: '🗓️ Data específica', callback_data: 'list_ag_data' }]
-    ]
-  };
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback('📅 Hoje', 'list_ag_hoje')],
+    [Markup.button.callback('📆 Esta semana', 'list_ag_semana')],
+    [Markup.button.callback('🗓️ Data específica', 'list_ag_data')]
+  ]);
   
-  bot.sendMessage(chatId, 'Selecione o período:', { reply_markup: keyboard });
+  ctx.reply('Selecione o período:', keyboard);
 });
 
-bot.onText(/\/cancelar_agendamento/, (msg) => {
-  const chatId = msg.chat.id;
+bot.command('cancelar_agendamento', (ctx) => {
+  const chatId = ctx.chat.id;
   userStates.set(chatId, { command: 'cancelar_agendamento', step: 'data' });
-  bot.sendMessage(chatId, '📅 Digite a data do agendamento (DD/MM/AAAA):');
+  ctx.reply('📅 Digite a data do agendamento (DD/MM/AAAA):');
 });
 
 // ==================== DESPESAS ====================
-bot.onText(/\/adicionar_despesa/, (msg) => {
-  const chatId = msg.chat.id;
+bot.command('adicionar_despesa', (ctx) => {
+  const chatId = ctx.chat.id;
   
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: '💼 Pró-labore', callback_data: 'desp_pro_labore' }],
-      [{ text: '🍔 Alimentação', callback_data: 'desp_alimentacao' }],
-      [{ text: '🚗 Transporte', callback_data: 'desp_transporte' }],
-      [{ text: '📦 Materiais', callback_data: 'desp_materiais' }],
-      [{ text: '📢 Marketing', callback_data: 'desp_marketing' }],
-      [{ text: '🔧 Equipamentos', callback_data: 'desp_equipamentos' }],
-      [{ text: '🏢 Aluguel', callback_data: 'desp_aluguel' }],
-      [{ text: '💡 Água/Luz', callback_data: 'desp_agua_luz' }],
-      [{ text: '📱 Telefonia', callback_data: 'desp_telefonia' }],
-      [{ text: '📋 Impostos', callback_data: 'desp_impostos' }],
-      [{ text: '🛠️ Manutenção', callback_data: 'desp_manutencao' }],
-      [{ text: '👥 Terceirizados', callback_data: 'desp_terceirizados' }],
-      [{ text: '📌 Outros', callback_data: 'desp_outros' }]
-    ]
-  };
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback('💼 Pró-labore', 'desp_pro_labore')],
+    [Markup.button.callback('🍔 Alimentação', 'desp_alimentacao')],
+    [Markup.button.callback('🚗 Transporte', 'desp_transporte')],
+    [Markup.button.callback('📦 Materiais', 'desp_materiais')],
+    [Markup.button.callback('📢 Marketing', 'desp_marketing')],
+    [Markup.button.callback('🔧 Equipamentos', 'desp_equipamentos')],
+    [Markup.button.callback('🏢 Aluguel', 'desp_aluguel')],
+    [Markup.button.callback('💡 Água/Luz', 'desp_agua_luz')],
+    [Markup.button.callback('📱 Telefonia', 'desp_telefonia')],
+    [Markup.button.callback('📋 Impostos', 'desp_impostos')],
+    [Markup.button.callback('🛠️ Manutenção', 'desp_manutencao')],
+    [Markup.button.callback('👥 Terceirizados', 'desp_terceirizados')],
+    [Markup.button.callback('📌 Outros', 'desp_outros')]
+  ]);
   
   userStates.set(chatId, { command: 'adicionar_despesa', data: {} });
-  bot.sendMessage(chatId, 'Selecione o tipo de despesa:', { reply_markup: keyboard });
+  ctx.reply('Selecione o tipo de despesa:', keyboard);
 });
 
-bot.onText(/\/listar_despesas/, (msg) => {
-  const chatId = msg.chat.id;
+bot.command('listar_despesas', (ctx) => {
+  const chatId = ctx.chat.id;
   
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: '📅 Hoje', callback_data: 'list_desp_hoje' }],
-      [{ text: '📆 Esta semana', callback_data: 'list_desp_semana' }],
-      [{ text: '🗓️ Este mês', callback_data: 'list_desp_mes' }],
-      [{ text: '📊 Período personalizado', callback_data: 'list_desp_periodo' }]
-    ]
-  };
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback('📅 Hoje', 'list_desp_hoje')],
+    [Markup.button.callback('📆 Esta semana', 'list_desp_semana')],
+    [Markup.button.callback('🗓️ Este mês', 'list_desp_mes')],
+    [Markup.button.callback('📊 Período personalizado', 'list_desp_periodo')]
+  ]);
   
-  bot.sendMessage(chatId, 'Selecione o período:', { reply_markup: keyboard });
+  ctx.reply('Selecione o período:', keyboard);
 });
 
-bot.onText(/\/total_despesas/, async (msg) => {
-  const chatId = msg.chat.id;
+bot.command('total_despesas', async (ctx) => {
+  const chatId = ctx.chat.id;
   
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: '📅 Hoje', callback_data: 'total_desp_hoje' }],
-      [{ text: '📆 Esta semana', callback_data: 'total_desp_semana' }],
-      [{ text: '🗓️ Este mês', callback_data: 'total_desp_mes' }]
-    ]
-  };
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback('📅 Hoje', 'total_desp_hoje')],
+    [Markup.button.callback('📆 Esta semana', 'total_desp_semana')],
+    [Markup.button.callback('🗓️ Este mês', 'total_desp_mes')]
+  ]);
   
-  bot.sendMessage(chatId, 'Selecione o período:', { reply_markup: keyboard });
+  ctx.reply('Selecione o período:', keyboard);
 });
 
 // ==================== ORÇAMENTOS ====================
-bot.onText(/\/criar_orcamento/, (msg) => {
-  const chatId = msg.chat.id;
+bot.command('criar_orcamento', (ctx) => {
+  const chatId = ctx.chat.id;
   userStates.set(chatId, { command: 'criar_orcamento', step: 'cliente', data: {} });
-  bot.sendMessage(chatId, '👤 Digite o nome do cliente:');
+  ctx.reply('👤 Digite o nome do cliente:');
 });
 
-bot.onText(/\/listar_orcamentos/, (msg) => {
-  const chatId = msg.chat.id;
+bot.command('listar_orcamentos', (ctx) => {
+  const chatId = ctx.chat.id;
   
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: '📝 Rascunhos', callback_data: 'list_orc_rascunho' }],
-      [{ text: '📤 Enviados', callback_data: 'list_orc_enviado' }],
-      [{ text: '✅ Aprovados', callback_data: 'list_orc_aprovado' }],
-      [{ text: '🎉 Concluídos', callback_data: 'list_orc_concluido' }],
-      [{ text: '📋 Todos', callback_data: 'list_orc_todos' }]
-    ]
-  };
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback('📝 Rascunhos', 'list_orc_rascunho')],
+    [Markup.button.callback('📤 Enviados', 'list_orc_enviado')],
+    [Markup.button.callback('✅ Aprovados', 'list_orc_aprovado')],
+    [Markup.button.callback('🎉 Concluídos', 'list_orc_concluido')],
+    [Markup.button.callback('📋 Todos', 'list_orc_todos')]
+  ]);
   
-  bot.sendMessage(chatId, 'Filtrar por status:', { reply_markup: keyboard });
+  ctx.reply('Filtrar por status:', keyboard);
 });
 
-bot.onText(/\/enviar_orcamento/, (msg) => {
-  const chatId = msg.chat.id;
+bot.command('enviar_orcamento', (ctx) => {
+  const chatId = ctx.chat.id;
   userStates.set(chatId, { command: 'enviar_orcamento', step: 'buscar' });
-  bot.sendMessage(chatId, '🔍 Digite o nome do cliente para buscar o orçamento:');
+  ctx.reply('🔍 Digite o nome do cliente para buscar o orçamento:');
 });
 
-bot.onText(/\/relatorio_mensal/, (msg) => {
-  const chatId = msg.chat.id;
+bot.command('relatorio_mensal', (ctx) => {
+  const chatId = ctx.chat.id;
   userStates.set(chatId, { command: 'relatorio_mensal', step: 'mes' });
-  bot.sendMessage(chatId, '📅 Digite o mês/ano (formato: MM/AAAA):');
+  ctx.reply('📅 Digite o mês/ano (formato: MM/AAAA):');
 });
 
 // ==================== CALLBACK HANDLERS ====================
 
 // ==================== MESSAGE HANDLER ====================
-bot.on('message', async (msg) => {
-  if (msg.text?.startsWith('/')) return; // Ignora comandos
+bot.on('text', async (ctx) => {
+  if (ctx.message.text.startsWith('/')) return; // Ignora comandos
   
-  const chatId = msg.chat.id;
+  const chatId = ctx.chat.id;
   const state = userStates.get(chatId);
   
   if (!state) return;
   
-  const text = msg.text || '';
+  const text = ctx.message.text;
   
   // ========== BUSCAR/REGISTRAR PAGAMENTO ==========
   if (state.command === 'buscar_pagamento' || state.command === 'registrar_pagamento') {
@@ -439,18 +461,20 @@ bot.on('message', async (msg) => {
         const vencimento = parseDate(text);
         state.data = { vencimento };
         state.step = 'responsavel';
-        bot.sendMessage(chatId, '👤 Digite o nome do responsável:');
+        ctx.reply('👤 Digite o nome do responsável:');
       } catch (error) {
-        bot.sendMessage(chatId, '❌ Data inválida. Use o formato DD/MM/AAAA');
+        ctx.reply('❌ Data inválida. Use o formato DD/MM/AAAA');
       }
     } else if (state.step === 'responsavel') {
       try {
+        const cleanText = text.trim();
         const responsavel = await db.collection('responsaveis').findOne({ 
-          nome: { $regex: text, $options: 'i' } 
+          nome: new RegExp(`^${cleanText}$`, 'i')
+
         });
         
         if (!responsavel) {
-          bot.sendMessage(chatId, '❌ Responsável não encontrado.');
+          ctx.reply('❌ Responsável não encontrado.');
           userStates.delete(chatId);
           return;
         }
@@ -461,7 +485,7 @@ bot.on('message', async (msg) => {
         });
         
         if (!pacote) {
-          bot.sendMessage(chatId, '❌ Pacote não encontrado para esta data e responsável.');
+          ctx.reply('❌ Pacote não encontrado para esta data e responsável.');
           userStates.delete(chatId);
           return;
         }
@@ -482,25 +506,23 @@ bot.on('message', async (msg) => {
           state.data.pacoteId = pacote._id;
           state.step = 'forma';
           
-          const keyboard = {
-            inline_keyboard: [
-              [{ text: '💳 PIX', callback_data: 'pag_pix' }],
-              [{ text: '💵 Dinheiro', callback_data: 'pag_dinheiro' }],
-              [{ text: '💳 Cartão', callback_data: 'pag_cartao' }],
-              [{ text: '🏦 Transferência', callback_data: 'pag_transferencia' }]
-            ]
-          };
+          const keyboard = Markup.inlineKeyboard([
+            [Markup.button.callback('💳 PIX', 'pag_pix')],
+            [Markup.button.callback('💵 Dinheiro', 'pag_dinheiro')],
+            [Markup.button.callback('💳 Cartão', 'pag_cartao')],
+            [Markup.button.callback('🏦 Transferência', 'pag_transferencia')]
+          ]);
           
-          bot.sendMessage(chatId, message + '\n💳 Selecione a forma de pagamento:', { 
+          ctx.reply(message + '\n💳 Selecione a forma de pagamento:', { 
             parse_mode: 'Markdown',
-            reply_markup: keyboard 
+            ...keyboard
           });
         } else {
-          bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+          ctx.reply(message, { parse_mode: 'Markdown' });
           userStates.delete(chatId);
         }
       } catch (error) {
-        bot.sendMessage(chatId, '❌ Erro ao buscar pacote.');
+        ctx.reply('❌ Erro ao buscar pacote.');
         console.error(error);
         userStates.delete(chatId);
       }
@@ -513,37 +535,32 @@ bot.on('message', async (msg) => {
       state.data.valor = parseFloat(text.replace(',', '.'));
       state.step = 'data';
       
-      const keyboard = {
-        inline_keyboard: [
-          [{ text: '📅 Hoje', callback_data: 'desp_data_hoje' }],
-          [{ text: '🗓️ Outra data', callback_data: 'desp_data_outra' }]
-        ]
-      };
-      
-      bot.sendMessage(chatId, 'Quando foi a despesa?', { reply_markup: keyboard });
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('📅 Hoje', 'desp_data_hoje')],
+        [Markup.button.callback('🗓️ Outra data', 'desp_data_outra')]
+      ]);
+      ctx.reply('Quando foi a despesa?', keyboard);
     } else if (state.step === 'data_manual') {
       try {
         state.data.data = parseDate(text);
         state.step = 'descricao';
-        bot.sendMessage(chatId, '📝 Digite a descrição da despesa:');
+        ctx.reply('📝 Digite a descrição da despesa:');
       } catch (error) {
-        bot.sendMessage(chatId, '❌ Data inválida. Use DD/MM/AAAA');
+        ctx.reply('❌ Data inválida. Use DD/MM/AAAA');
       }
     } else if (state.step === 'descricao') {
       state.data.descricao = text;
       
-      const keyboard = {
-        inline_keyboard: [
-          [{ text: '💳 PIX', callback_data: 'desp_pag_pix' }],
-          [{ text: '💵 Dinheiro', callback_data: 'desp_pag_dinheiro' }],
-          [{ text: '💳 Cartão Crédito', callback_data: 'desp_pag_cartao_credito' }],
-          [{ text: '💳 Cartão Débito', callback_data: 'desp_pag_cartao_debito' }],
-          [{ text: '🏦 Transferência', callback_data: 'desp_pag_transferencia' }],
-          [{ text: '⏭️ Pular', callback_data: 'desp_pag_pular' }]
-        ]
-      };
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('💳 PIX', 'desp_pag_pix')],
+        [Markup.button.callback('💵 Dinheiro', 'desp_pag_dinheiro')],
+        [Markup.button.callback('💳 Cartão Crédito', 'desp_pag_cartao_credito')],
+        [Markup.button.callback('💳 Cartão Débito', 'desp_pag_cartao_debito')],
+        [Markup.button.callback('🏦 Transferência', 'desp_pag_transferencia')],
+        [Markup.button.callback('⏭️ Pular', 'desp_pag_pular')]
+      ]);
       
-      bot.sendMessage(chatId, 'Forma de pagamento (opcional):', { reply_markup: keyboard });
+      ctx.reply('Forma de pagamento (opcional):', keyboard);
     }
   }
   
@@ -553,80 +570,73 @@ bot.on('message', async (msg) => {
       state.data.cliente = text;
       state.step = 'tipo';
       
-      const keyboard = {
-        inline_keyboard: [
-          [{ text: '🎉 Festa', callback_data: 'orc_tipo_festa' }],
-          [{ text: '📅 Evento', callback_data: 'orc_tipo_evento' }]
-        ]
-      };
-      
-      bot.sendMessage(chatId, 'Tipo de serviço:', { reply_markup: keyboard });
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('🎉 Festa', 'orc_tipo_festa')],
+        [Markup.button.callback('📅 Evento', 'orc_tipo_evento')]
+      ]);
+      ctx.reply('Tipo de serviço:', keyboard);
     } else if (state.step === 'data') {
       try {
         state.data.dataEvento = parseDate(text);
         state.step = 'horario';
-        bot.sendMessage(chatId, '⏰ Digite o horário (HH:MM):');
+        ctx.reply('⏰ Digite o horário (HH:MM):');
       } catch (error) {
-        bot.sendMessage(chatId, '❌ Data inválida. Use DD/MM/AAAA');
+        ctx.reply('❌ Data inválida. Use DD/MM/AAAA');
       }
     } else if (state.step === 'horario') {
       state.data.horario = text;
       state.step = 'criancas';
-      bot.sendMessage(chatId, '👶 Quantidade de crianças:');
+      ctx.reply('👶 Quantidade de crianças:');
     } else if (state.step === 'criancas') {
       state.data.quantidadeCriancas = parseInt(text);
       state.step = 'duracao';
-      bot.sendMessage(chatId, '⏱️ Duração em horas (ex: 2 ou 1.5):');
+      ctx.reply('⏱️ Duração em horas (ex: 2 ou 1.5):');
     } else if (state.step === 'duracao') {
       state.data.duracao = parseFloat(text.replace(',', '.'));
       
-      const keyboard = {
-        inline_keyboard: [
-          [{ text: '1 recreador', callback_data: 'orc_rec_1' }],
-          [{ text: '2 recreadores', callback_data: 'orc_rec_2' }],
-          [{ text: '3 recreadores', callback_data: 'orc_rec_3' }],
-          [{ text: 'Outro', callback_data: 'orc_rec_outro' }]
-        ]
-      };
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('1 recreador', 'orc_rec_1')],
+        [Markup.button.callback('2 recreadores', 'orc_rec_2')],
+        [Markup.button.callback('3 recreadores', 'orc_rec_3')],
+        [Markup.button.callback('Outro', 'orc_rec_outro')]
+      ]);
       
-      bot.sendMessage(chatId, 'Quantidade de recreadores:', { reply_markup: keyboard });
+      ctx.reply('Quantidade de recreadores:', keyboard);
     } else if (state.step === 'recreadores_manual') {
       state.data.quantidadeRecreadores = parseInt(text);
       
-      const keyboard = {
-        inline_keyboard: [
-          [{ text: 'Sim', callback_data: 'orc_fds_sim' }],
-          [{ text: 'Não', callback_data: 'orc_fds_nao' }]
-        ]
-      };
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('Sim', 'orc_fds_sim')],
+        [Markup.button.callback('Não', 'orc_fds_nao')]
+      ]);
       
-      bot.sendMessage(chatId, 'É feriado ou fim de semana?', { reply_markup: keyboard });
+      ctx.reply('É feriado ou fim de semana?', keyboard);
     } else if (state.step === 'deslocamento') {
       state.data.custoDeslocamento = parseFloat(text.replace(',', '.')) || 0;
       state.step = 'desconto';
-      bot.sendMessage(chatId, '💰 Desconto (ou 0):');
+      ctx.reply('💰 Desconto (ou 0):');
     } else if (state.step === 'desconto') {
       state.data.desconto = parseFloat(text.replace(',', '.')) || 0;
       state.step = 'endereco';
-      bot.sendMessage(chatId, '📍 Digite o endereço:');
+      ctx.reply('📍 Digite o endereço:');
     } else if (state.step === 'endereco') {
       state.data.endereco = text;
       state.step = 'complemento';
-      bot.sendMessage(chatId, '📍 Complemento (ou "pular"):');
+      ctx.reply('📍 Complemento (ou "pular"):');
     } else if (state.step === 'complemento') {
       if (text.toLowerCase() !== 'pular') {
         state.data.complemento = text;
       }
       state.step = 'bairro';
-      bot.sendMessage(chatId, '🏘️ Bairro:');
+      ctx.reply('🏘️ Bairro:');
     } else if (state.step === 'bairro') {
       state.data.bairro = text;
       state.step = 'cidade';
-      bot.sendMessage(chatId, '🏙️ Cidade:');
+      ctx.reply('🏙️ Cidade:');
     } else if (state.step === 'cidade') {
       state.data.cidade = text;
       state.step = 'telefone';
-      bot.sendMessage(chatId, '📱 Telefone (opcional, ou "pular"):');
+      ctx.reply('📱 Telefone (opcional, ou "pular"):');
     } else if (state.step === 'telefone') {
       if (text.toLowerCase() !== 'pular') {
         state.data.telefone = text;
@@ -652,10 +662,10 @@ bot.on('message', async (msg) => {
         message += `🆔 ID: ${orcamentoId}\n\n`;
         message += `🔗 Link: ${BACKOFFICE_URL}/orcamento/${orcamentoId}`;
         
-        bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+        ctx.reply(message, { parse_mode: 'Markdown' });
         userStates.delete(chatId);
       } catch (error) {
-        bot.sendMessage(chatId, '❌ Erro ao criar orçamento.');
+        ctx.reply('❌ Erro ao criar orçamento.');
         console.error(error);
         userStates.delete(chatId);
       }
@@ -667,7 +677,7 @@ bot.on('message', async (msg) => {
     if (state.step === 'orcamento_id') {
       state.data.orcamentoId = text;
       state.step = 'data';
-      bot.sendMessage(chatId, '📅 Digite a data (DD/MM/AAAA):');
+      ctx.reply('📅 Digite a data (DD/MM/AAAA):');
     } else if (state.step === 'responsavel_nome') {
       try {
         const responsavel = await db.collection('responsaveis').findOne({ 
@@ -675,16 +685,16 @@ bot.on('message', async (msg) => {
         });
         
         if (!responsavel) {
-          bot.sendMessage(chatId, '❌ Responsável não encontrado.');
+          ctx.reply('❌ Responsável não encontrado.');
           userStates.delete(chatId);
           return;
         }
         
         state.data.responsavelId = responsavel._id;
         state.step = 'data';
-        bot.sendMessage(chatId, '📅 Digite a data (DD/MM/AAAA):');
+        ctx.reply('📅 Digite a data (DD/MM/AAAA):');
       } catch (error) {
-        bot.sendMessage(chatId, '❌ Erro ao buscar responsável.');
+        ctx.reply('❌ Erro ao buscar responsável.');
         console.error(error);
         userStates.delete(chatId);
       }
@@ -692,26 +702,26 @@ bot.on('message', async (msg) => {
       try {
         state.data.data = parseDate(text);
         state.step = 'horario';
-        bot.sendMessage(chatId, '⏰ Digite o horário (HH:MM):');
+        ctx.reply('⏰ Digite o horário (HH:MM):');
       } catch (error) {
-        bot.sendMessage(chatId, '❌ Data inválida. Use DD/MM/AAAA');
+        ctx.reply('❌ Data inválida. Use DD/MM/AAAA');
       }
     } else if (state.step === 'horario') {
       state.data.horario = text;
       state.step = 'duracao';
-      bot.sendMessage(chatId, '⏱️ Duração em horas:');
+      ctx.reply('⏱️ Duração em horas:');
     } else if (state.step === 'duracao') {
       state.data.duracao = parseFloat(text.replace(',', '.'));
       state.step = 'local';
-      bot.sendMessage(chatId, '📍 Digite o local:');
+      ctx.reply('📍 Digite o local:');
     } else if (state.step === 'local') {
       state.data.local = text;
       state.step = 'descricao';
-      bot.sendMessage(chatId, '📝 Digite a descrição:');
+      ctx.reply('📝 Digite a descrição:');
     } else if (state.step === 'descricao') {
       state.data.descricao = text;
       state.step = 'observacoes';
-      bot.sendMessage(chatId, '💬 Observações (ou "pular"):');
+      ctx.reply('💬 Observações (ou "pular"):');
     } else if (state.step === 'observacoes') {
       if (text.toLowerCase() !== 'pular') {
         state.data.observacoes = text;
@@ -728,10 +738,10 @@ bot.on('message', async (msg) => {
         // Salva no banco
         await db.collection('agendamentos').insertOne(state.data);
         
-        bot.sendMessage(chatId, '✅ Agendamento criado com sucesso!');
+        ctx.reply('✅ Agendamento criado com sucesso!');
         userStates.delete(chatId);
       } catch (error) {
-        bot.sendMessage(chatId, '❌ Erro ao criar agendamento.');
+        ctx.reply('❌ Erro ao criar agendamento.');
         console.error(error);
         userStates.delete(chatId);
       }
@@ -747,7 +757,7 @@ bot.on('message', async (msg) => {
         await enviarRelatorioMensal(chatId, mesAno);
         userStates.delete(chatId);
       } catch (error) {
-        bot.sendMessage(chatId, '❌ Formato inválido. Use MM/AAAA');
+        ctx.reply('❌ Formato inválido. Use MM/AAAA');
       }
     }
   }
@@ -761,7 +771,7 @@ bot.on('message', async (msg) => {
         }).sort({ createdAt: -1 }).limit(5).toArray();
         
         if (orcamentos.length === 0) {
-          bot.sendMessage(chatId, '❌ Nenhum orçamento encontrado.');
+          ctx.reply('❌ Nenhum orçamento encontrado.');
           userStates.delete(chatId);
           return;
         }
@@ -769,7 +779,7 @@ bot.on('message', async (msg) => {
         if (orcamentos.length === 1) {
           const orc = orcamentos[0];
           const link = `${BACKOFFICE_URL}/orcamento/${orc._id}`;
-          bot.sendMessage(chatId, `🔗 Link do orçamento:\n${link}`);
+          ctx.reply(`🔗 Link do orçamento:\n${link}`);
           userStates.delete(chatId);
         } else {
           // Múltiplos orçamentos - mostra lista
@@ -780,11 +790,11 @@ bot.on('message', async (msg) => {
             message += `💰 ${formatCurrency(orc.valorFinal)}\n`;
             message += `🔗 ${BACKOFFICE_URL}/orcamento/${orc._id}\n\n`;
           }
-          bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+          ctx.reply(message, { parse_mode: 'Markdown' });
           userStates.delete(chatId);
         }
       } catch (error) {
-        bot.sendMessage(chatId, '❌ Erro ao buscar orçamento.');
+        ctx.reply('❌ Erro ao buscar orçamento.');
         console.error(error);
         userStates.delete(chatId);
       }
@@ -809,7 +819,7 @@ bot.on('message', async (msg) => {
         }).sort({ data: 1, horario: 1 }).toArray();
         
         if (agendamentos.length === 0) {
-          bot.sendMessage(chatId, '📭 Não há agendamentos para esta data.');
+          ctx.reply('📭 Não há agendamentos para esta data.');
         } else {
           let message = `📅 *AGENDAMENTOS - ${formatDate(data)}*\n\n`;
           
@@ -828,12 +838,12 @@ bot.on('message', async (msg) => {
             message += '---\n';
           }
           
-          bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+          ctx.reply(message, { parse_mode: 'Markdown' });
         }
         
         userStates.delete(chatId);
       } catch (error) {
-        bot.sendMessage(chatId, '❌ Data inválida. Use DD/MM/AAAA');
+        ctx.reply('❌ Data inválida. Use DD/MM/AAAA');
       }
     }
   }
@@ -844,9 +854,9 @@ bot.on('message', async (msg) => {
       try {
         state.data.inicio = parseDate(text);
         state.step = 'fim';
-        bot.sendMessage(chatId, '📅 Digite a data final (DD/MM/AAAA):');
+        ctx.reply('📅 Digite a data final (DD/MM/AAAA):');
       } catch (error) {
-        bot.sendMessage(chatId, '❌ Data inválida. Use DD/MM/AAAA');
+        ctx.reply('❌ Data inválida. Use DD/MM/AAAA');
       }
     } else if (state.step === 'fim') {
       try {
@@ -860,7 +870,7 @@ bot.on('message', async (msg) => {
         }).sort({ data: -1 }).toArray();
         
         if (despesas.length === 0) {
-          bot.sendMessage(chatId, '📭 Não há despesas para este período.');
+          ctx.reply('📭 Não há despesas para este período.');
           userStates.delete(chatId);
           return;
         }
@@ -885,10 +895,10 @@ bot.on('message', async (msg) => {
         
         message += `\n💵 *TOTAL: ${formatCurrency(total)}*`;
         
-        bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+        ctx.reply(message, { parse_mode: 'Markdown' });
         userStates.delete(chatId);
       } catch (error) {
-        bot.sendMessage(chatId, '❌ Data inválida. Use DD/MM/AAAA');
+        ctx.reply('❌ Data inválida. Use DD/MM/AAAA');
       }
     }
   }
@@ -910,7 +920,7 @@ cron.schedule('0 7 * * *', async () => {
     }).toArray();
     
     if (agendamentos.length === 0) {
-      bot.sendMessage(ADMIN_CHAT_ID, '☀️ Bom dia! Não há agendamentos para hoje.');
+      bot.telegram.sendMessage(ADMIN_CHAT_ID, '☀️ Bom dia! Não há agendamentos para hoje.');
       return;
     }
     
@@ -927,7 +937,7 @@ cron.schedule('0 7 * * *', async () => {
     
     message += `📋 Total: ${agendamentos.length} agendamento(s)`;
     
-    bot.sendMessage(ADMIN_CHAT_ID, message, { parse_mode: 'Markdown' });
+    bot.telegram.sendMessage(ADMIN_CHAT_ID, message, { parse_mode: 'Markdown' });
   } catch (error) {
     console.error('Erro no lembrete diário:', error);
   }
@@ -960,17 +970,15 @@ cron.schedule('*/15 * * * *', async () => {
         message += `⏱️ Duração: ${ag.duracao}h\n`;
         if (ag.observacoes) message += `💬 ${ag.observacoes}\n`;
         
-        const keyboard = {
-          inline_keyboard: [
-            [{ text: '✅ Confirmar', callback_data: `ag_conf_${ag._id}` }],
-            [{ text: '📅 Reagendar', callback_data: `ag_reag_${ag._id}` }],
-            [{ text: '❌ Cancelar', callback_data: `ag_canc_${ag._id}` }]
-          ]
-        };
+        const keyboard = Markup.inlineKeyboard([
+          [Markup.button.callback('✅ Confirmar', `ag_conf_${ag._id}`)],
+          [Markup.button.callback('📅 Reagendar', `ag_reag_${ag._id}`)],
+          [Markup.button.callback('❌ Cancelar', `ag_canc_${ag._id}`)]
+        ]);
         
-        await bot.sendMessage(ADMIN_CHAT_ID, message, { 
+        await bot.telegram.sendMessage(ADMIN_CHAT_ID, message, { 
           parse_mode: 'Markdown',
-          reply_markup: keyboard 
+          ...keyboard
         });
         
         // Marca como lembrete enviado
@@ -1082,244 +1090,286 @@ async function enviarRelatorioMensal(chatId: number, mesAno: string) {
       message += `⚪ Empatou no mês`;
     }
     
-    bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+    bot.telegram.sendMessage(chatId, message, { parse_mode: 'Markdown' });
   } catch (error) {
-    bot.sendMessage(chatId, '❌ Erro ao gerar relatório mensal.');
+    bot.telegram.sendMessage(chatId, '❌ Erro ao gerar relatório mensal.');
     console.error(error);
   }
 }
 
 // ==================== CALLBACK HANDLERS ====================
-bot.on('callback_query', async (query) => {
-  const chatId = query.message!.chat.id;
-  const data = query.data!;
+// Agendamento - Tipo
+bot.action(/^ag_tipo_(.+)$/, async (ctx) => {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  const tipo = ctx.match[1] as 'evento' | 'festa' | 'pacote' | 'pessoal';
+  const state = userStates.get(chatId);
+  if (state) {
+    state.data.tipo = tipo;
+    
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('🔢 Por Orçamento', 'ag_vinc_orcamento')],
+      [Markup.button.callback('👤 Por Responsável', 'ag_vinc_responsavel')],
+      [Markup.button.callback('📌 Sem vínculo', 'ag_vinc_nenhum')]
+    ]);
+    
+    await ctx.editMessageText('Como deseja vincular o agendamento?', keyboard);
+  }
+  await ctx.answerCbQuery();
+});
+
+// Agendamento - Vínculo
+bot.action(/^ag_vinc_(.+)$/, async (ctx) => {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  const vinculo = ctx.match[1];
+  const state = userStates.get(chatId);
+  if (state) {
+    state.data.vinculo = vinculo;
+    
+    if (vinculo === 'orcamento') {
+      state.step = 'orcamento_id';
+      ctx.reply('🔢 Digite o ID do orçamento:');
+    } else if (vinculo === 'responsavel') {
+      state.step = 'responsavel_nome';
+      ctx.reply('👤 Digite o nome do responsável:');
+    } else {
+      state.step = 'data';
+      ctx.reply('📅 Digite a data (DD/MM/AAAA):');
+    }
+  }
+  await ctx.answerCbQuery();
+});
+
+// Despesa - Tipo
+bot.action(/^desp_(?!pag_|data_)(.+)$/, async (ctx) => {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  const tipo = ctx.match[1];
+  const state = userStates.get(chatId);
+  if (state) {
+    state.data.tipo = tipo;
+    state.step = 'valor';
+    ctx.reply('💰 Digite o valor da despesa (ex: 150.50):');
+  }
+  await ctx.answerCbQuery();
+});
+
+// Callbacks de pagamento
+bot.action(/^pag_(.+)$/, async (ctx) => {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  const forma = ctx.match[1];
   const state = userStates.get(chatId);
   
-  // Agendamento - Tipo
-  if (data.startsWith('ag_tipo_')) {
-    const tipo = data.replace('ag_tipo_', '') as 'evento' | 'festa' | 'pacote' | 'pessoal';
-    const state = userStates.get(chatId);
-    if (state) {
-      state.data.tipo = tipo;
+  if (state && state.data && state.data.pacoteId) {
+    try {
+      await db.collection('pacotes').updateOne(
+        { _id: state.data.pacoteId },
+        { 
+          $set: { 
+            isPaid: true, 
+            forma: forma,
+            pagoEm: new Date(),
+            updatedAt: new Date()
+          } 
+        }
+      );
       
-      const keyboard = {
-        inline_keyboard: [
-          [{ text: '🔢 Por Orçamento', callback_data: 'ag_vinc_orcamento' }],
-          [{ text: '👤 Por Responsável', callback_data: 'ag_vinc_responsavel' }],
-          [{ text: '📌 Sem vínculo', callback_data: 'ag_vinc_nenhum' }]
-        ]
+      ctx.reply(`✅ Pagamento registrado com sucesso!\n💳 Forma: ${forma}`);
+      userStates.delete(chatId);
+    } catch (error) {
+      ctx.reply('❌ Erro ao registrar pagamento.');
+      console.error(error);
+    }
+  }
+  await ctx.answerCbQuery();
+});
+
+// Callbacks de despesa - data
+bot.action('desp_data_hoje', async (ctx) => {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  const state = userStates.get(chatId);
+  if (state) {
+    state.data.data = new Date();
+    state.step = 'descricao';
+    ctx.reply('📝 Digite a descrição da despesa:');
+  }
+  await ctx.answerCbQuery();
+});
+
+bot.action('desp_data_outra', async (ctx) => {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  const state = userStates.get(chatId);
+  if (state) {
+    state.step = 'data_manual';
+    ctx.reply('📅 Digite a data (DD/MM/AAAA):');
+  }
+  await ctx.answerCbQuery();
+});
+
+// Callbacks de despesa - forma pagamento
+bot.action(/^desp_pag_(.+)$/, async (ctx) => {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  const forma = ctx.match[1];
+  const state = userStates.get(chatId);
+  
+  if (state && state.data) {
+    if (forma !== 'pular') {
+      state.data.formaPagamento = forma;
+    }
+    
+    try {
+      const despesa: Despesa = {
+        tipo: state.data.tipo,
+        valor: state.data.valor,
+        data: state.data.data,
+        descricao: state.data.descricao,
+        formaPagamento: state.data.formaPagamento,
+        createdAt: new Date(),
+        updatedAt: new Date()
       };
       
-      bot.editMessageText('Como deseja vincular o agendamento?', {
-        chat_id: chatId,
-        message_id: query.message!.message_id,
-        reply_markup: keyboard
-      });
-    }
-  }
-  
-  // Agendamento - Vínculo
-  if (data.startsWith('ag_vinc_')) {
-    const vinculo = data.replace('ag_vinc_', '');
-    const state = userStates.get(chatId);
-    if (state) {
-      state.data.vinculo = vinculo;
+      await db.collection('despesas').insertOne(despesa);
       
-      if (vinculo === 'orcamento') {
-        state.step = 'orcamento_id';
-        bot.sendMessage(chatId, '🔢 Digite o ID do orçamento:');
-      } else if (vinculo === 'responsavel') {
-        state.step = 'responsavel_nome';
-        bot.sendMessage(chatId, '👤 Digite o nome do responsável:');
-      } else {
-        state.step = 'data';
-        bot.sendMessage(chatId, '📅 Digite a data (DD/MM/AAAA):');
-      }
-    }
-  }
-  
-  // Despesa - Tipo
-  if (data.startsWith('desp_') && !data.startsWith('desp_pag_') && !data.startsWith('desp_data_')) {
-    const tipo = data.replace('desp_', '');
-    const state = userStates.get(chatId);
-    if (state) {
-      state.data.tipo = tipo;
-      state.step = 'valor';
-      bot.sendMessage(chatId, '💰 Digite o valor da despesa (ex: 150.50):');
-    }
-  }
-  
-  // Callbacks de pagamento
-  if (data.startsWith('pag_')) {
-    const forma = data.replace('pag_', '');
-    
-    if (state && state.data && state.data.pacoteId) {
-      try {
-        await db.collection('pacotes').updateOne(
-          { _id: state.data.pacoteId },
-          { 
-            $set: { 
-              isPaid: true, 
-              forma: forma,
-              pagoEm: new Date(),
-              updatedAt: new Date()
-            } 
-          }
-        );
-        
-        bot.sendMessage(chatId, `✅ Pagamento registrado com sucesso!\n💳 Forma: ${forma}`);
-        userStates.delete(chatId);
-      } catch (error) {
-        bot.sendMessage(chatId, '❌ Erro ao registrar pagamento.');
-        console.error(error);
-      }
-    }
-  }
-  
-  // Callbacks de despesa - data
-  if (data === 'desp_data_hoje') {
-    if (state) {
-      state.data.data = new Date();
-      state.step = 'descricao';
-      bot.sendMessage(chatId, '📝 Digite a descrição da despesa:');
-    }
-  } else if (data === 'desp_data_outra') {
-    if (state) {
-      state.step = 'data_manual';
-      bot.sendMessage(chatId, '📅 Digite a data (DD/MM/AAAA):');
-    }
-  }
-  
-  // Callbacks de despesa - forma pagamento
-  if (data.startsWith('desp_pag_')) {
-    const forma = data.replace('desp_pag_', '');
-    
-    if (state && state.data) {
-      if (forma !== 'pular') {
-        state.data.formaPagamento = forma;
-      }
+      let message = '✅ *Despesa adicionada com sucesso!*\n\n';
+      message += `📝 ${despesa.descricao}\n`;
+      message += `💰 ${formatCurrency(despesa.valor)}\n`;
+      message += `📅 ${formatDate(despesa.data)}\n`;
+      if (despesa.formaPagamento) message += `💳 ${despesa.formaPagamento}\n`;
       
-      try {
-        const despesa: Despesa = {
-          tipo: state.data.tipo,
-          valor: state.data.valor,
-          data: state.data.data,
-          descricao: state.data.descricao,
-          formaPagamento: state.data.formaPagamento,
-          createdAt: new Date(),
-          updatedAt: new Date()
-        };
-        
-        await db.collection('despesas').insertOne(despesa);
-        
-        let message = '✅ *Despesa adicionada com sucesso!*\n\n';
-        message += `📝 ${despesa.descricao}\n`;
-        message += `💰 ${formatCurrency(despesa.valor)}\n`;
-        message += `📅 ${formatDate(despesa.data)}\n`;
-        if (despesa.formaPagamento) message += `💳 ${despesa.formaPagamento}\n`;
-        
-        bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
-        userStates.delete(chatId);
-      } catch (error) {
-        bot.sendMessage(chatId, '❌ Erro ao adicionar despesa.');
-        console.error(error);
-      }
+      ctx.reply(message, { parse_mode: 'Markdown' });
+      userStates.delete(chatId);
+    } catch (error) {
+      ctx.reply('❌ Erro ao adicionar despesa.');
+      console.error(error);
     }
   }
+  await ctx.answerCbQuery();
+});
+
+// Callbacks de orçamento - tipo
+bot.action(/^orc_tipo_(.+)$/, async (ctx) => {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  const tipo = ctx.match[1] as 'festa' | 'evento';
+  const state = userStates.get(chatId);
+  if (state) {
+    state.data.tipo = tipo;
+    state.step = 'data';
+    ctx.reply('📅 Digite a data do evento (DD/MM/AAAA):');
+  }
+  await ctx.answerCbQuery();
+});
   
-  // Callbacks de orçamento - tipo
-  if (data.startsWith('orc_tipo_')) {
-    const tipo = data.replace('orc_tipo_', '') as 'festa' | 'evento';
-    if (state) {
-      state.data.tipo = tipo;
-      state.step = 'data';
-      bot.sendMessage(chatId, '📅 Digite a data do evento (DD/MM/AAAA):');
+// Callbacks de orçamento - recreadores
+bot.action(/^orc_rec_(.+)$/, async (ctx) => {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  const rec = ctx.match[1];
+  const state = userStates.get(chatId);
+  
+  if (state) {
+    if (rec === 'outro') {
+      state.step = 'recreadores_manual';
+      ctx.reply('👥 Digite a quantidade de recreadores:');
+    } else {
+      state.data.quantidadeRecreadores = parseInt(rec);
+      
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('Sim', 'orc_fds_sim')],
+        [Markup.button.callback('Não', 'orc_fds_nao')]
+      ]);
+      
+      ctx.reply('É feriado ou fim de semana?', keyboard);
     }
   }
+  await ctx.answerCbQuery();
+});
+
+// Callbacks de orçamento - feriado/FDS
+bot.action(/^orc_fds_(.+)$/, async (ctx) => {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  const data = ctx.match[0];
+  const state = userStates.get(chatId);
+  if (state) {
+    state.data.isFeriadoOuFds = data === 'orc_fds_sim';
+    state.step = 'deslocamento';
+    ctx.reply('🚗 Custo de deslocamento (ou 0):');
+  }
+  await ctx.answerCbQuery();
+});
+
+// Callbacks de listagem de agendamentos
+bot.action(/^list_ag_(.+)$/, async (ctx) => {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  const periodo = ctx.match[1];
+  await listarAgendamentos(chatId, periodo);
+  await ctx.answerCbQuery();
+});
+
+// Callbacks de listagem de despesas
+bot.action(/^list_desp_(.+)$/, async (ctx) => {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  const periodo = ctx.match[1];
+  await listarDespesas(chatId, periodo);
+  await ctx.answerCbQuery();
+});
+
+// Callbacks de total de despesas
+bot.action(/^total_desp_(.+)$/, async (ctx) => {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  const periodo = ctx.match[1];
+  await calcularTotalDespesas(chatId, periodo);
+  await ctx.answerCbQuery();
+});
+
+// Callbacks de listagem de orçamentos
+bot.action(/^list_orc_(.+)$/, async (ctx) => {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  const status = ctx.match[1];
+  await listarOrcamentos(chatId, status);
+  await ctx.answerCbQuery();
+});
+
+// Callbacks de ações rápidas no lembrete
+bot.action(/^ag_conf_(.+)$/, async (ctx) => {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  const agId = new ObjectId(ctx.match[1]);
+  await db.collection('agendamentos').updateOne(
+    { _id: agId },
+    { $set: { status: 'confirmado', updatedAt: new Date() } }
+  );
+  ctx.reply('✅ Agendamento confirmado!');
+  await ctx.answerCbQuery();
+});
+
+bot.action(/^ag_canc_(.+)$/, async (ctx) => {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  const agId = new ObjectId(ctx.match[1]);
+  const ag = await db.collection('agendamentos').findOne({ _id: agId });
   
-  // Callbacks de orçamento - recreadores
-  if (data.startsWith('orc_rec_')) {
-    const rec = data.replace('orc_rec_', '');
-    
-    if (state) {
-      if (rec === 'outro') {
-        state.step = 'recreadores_manual';
-        bot.sendMessage(chatId, '👥 Digite a quantidade de recreadores:');
-      } else {
-        state.data.quantidadeRecreadores = parseInt(rec);
-        
-        const keyboard = {
-          inline_keyboard: [
-            [{ text: 'Sim', callback_data: 'orc_fds_sim' }],
-            [{ text: 'Não', callback_data: 'orc_fds_nao' }]
-          ]
-        };
-        
-        bot.sendMessage(chatId, 'É feriado ou fim de semana?', { reply_markup: keyboard });
-      }
-    }
+  await db.collection('agendamentos').updateOne(
+    { _id: agId },
+    { $set: { status: 'cancelado', updatedAt: new Date() } }
+  );
+  
+  if (ag?.googleEventId) {
+    await deleteCalendarEvent(ag.googleEventId);
   }
   
-  // Callbacks de orçamento - feriado/FDS
-  if (data.startsWith('orc_fds_')) {
-    if (state) {
-      state.data.isFeriadoOuFds = data === 'orc_fds_sim';
-      state.step = 'deslocamento';
-      bot.sendMessage(chatId, '🚗 Custo de deslocamento (ou 0):');
-    }
-  }
-  
-  // Callbacks de listagem de agendamentos
-  if (data.startsWith('list_ag_')) {
-    const periodo = data.replace('list_ag_', '');
-    await listarAgendamentos(chatId, periodo);
-  }
-  
-  // Callbacks de listagem de despesas
-  if (data.startsWith('list_desp_')) {
-    const periodo = data.replace('list_desp_', '');
-    await listarDespesas(chatId, periodo);
-  }
-  
-  // Callbacks de total de despesas
-  if (data.startsWith('total_desp_')) {
-    const periodo = data.replace('total_desp_', '');
-    await calcularTotalDespesas(chatId, periodo);
-  }
-  
-  // Callbacks de listagem de orçamentos
-  if (data.startsWith('list_orc_')) {
-    const status = data.replace('list_orc_', '');
-    await listarOrcamentos(chatId, status);
-  }
-  
-  // Callbacks de ações rápidas no lembrete
-  if (data.startsWith('ag_conf_')) {
-    const agId = new ObjectId(data.replace('ag_conf_', ''));
-    await db.collection('agendamentos').updateOne(
-      { _id: agId },
-      { $set: { status: 'confirmado', updatedAt: new Date() } }
-    );
-    bot.sendMessage(chatId, '✅ Agendamento confirmado!');
-  }
-  
-  if (data.startsWith('ag_canc_')) {
-    const agId = new ObjectId(data.replace('ag_canc_', ''));
-    const ag = await db.collection('agendamentos').findOne({ _id: agId });
-    
-    await db.collection('agendamentos').updateOne(
-      { _id: agId },
-      { $set: { status: 'cancelado', updatedAt: new Date() } }
-    );
-    
-    if (ag.googleEventId) {
-      await deleteCalendarEvent(ag.googleEventId);
-    }
-    
-    bot.sendMessage(chatId, '❌ Agendamento cancelado!');
-  }
-  
-  bot.answerCallbackQuery(query.id);
+  ctx.reply('❌ Agendamento cancelado!');
+  await ctx.answerCbQuery();
 });
 
 // ==================== FUNÇÕES AUXILIARES DE LISTAGEM ====================
@@ -1340,12 +1390,12 @@ async function listarAgendamentos(chatId: number, periodo: string) {
       fim.setDate(fim.getDate() + 7);
     } else if (periodo === 'data') {
       userStates.set(chatId, { command: 'listar_agendamentos', step: 'data_especifica' });
-      bot.sendMessage(chatId, '📅 Digite a data (DD/MM/AAAA):');
+      bot.telegram.sendMessage(chatId, '📅 Digite a data (DD/MM/AAAA):');
       return;
     }
     
     if (!inicio || !fim) {
-      bot.sendMessage(chatId, '❌ Período inválido.');
+      bot.telegram.sendMessage(chatId, '❌ Período inválido.');
       return;
     }
     
@@ -1355,7 +1405,7 @@ async function listarAgendamentos(chatId: number, periodo: string) {
     }).sort({ data: 1, horario: 1 }).toArray();
     
     if (agendamentos.length === 0) {
-      bot.sendMessage(chatId, '📭 Não há agendamentos para este período.');
+      bot.telegram.sendMessage(chatId, '📭 Não há agendamentos para este período.');
       return;
     }
     
@@ -1376,9 +1426,9 @@ async function listarAgendamentos(chatId: number, periodo: string) {
       message += '---\n';
     }
     
-    bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+    bot.telegram.sendMessage(chatId, message, { parse_mode: 'Markdown' });
   } catch (error) {
-    bot.sendMessage(chatId, '❌ Erro ao listar agendamentos.');
+    bot.telegram.sendMessage(chatId, '❌ Erro ao listar agendamentos.');
     console.error(error);
   }
 }
@@ -1405,12 +1455,12 @@ async function listarDespesas(chatId: number, periodo: string) {
       fim.setMonth(fim.getMonth() + 1);
     } else if (periodo === 'periodo') {
       userStates.set(chatId, { command: 'listar_despesas', step: 'inicio' });
-      bot.sendMessage(chatId, '📅 Digite a data inicial (DD/MM/AAAA):');
+      bot.telegram.sendMessage(chatId, '📅 Digite a data inicial (DD/MM/AAAA):');
       return;
     }
     
     if (!inicio || !fim) {
-      bot.sendMessage(chatId, '❌ Período inválido.');
+      bot.telegram.sendMessage(chatId, '❌ Período inválido.');
       return;
     }
     
@@ -1419,7 +1469,7 @@ async function listarDespesas(chatId: number, periodo: string) {
     }).sort({ data: -1 }).toArray();
     
     if (despesas.length === 0) {
-      bot.sendMessage(chatId, '📭 Não há despesas para este período.');
+      bot.telegram.sendMessage(chatId, '📭 Não há despesas para este período.');
       return;
     }
     
@@ -1443,9 +1493,9 @@ async function listarDespesas(chatId: number, periodo: string) {
     
     message += `\n💵 *TOTAL: ${formatCurrency(total)}*`;
     
-    bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+    bot.telegram.sendMessage(chatId, message, { parse_mode: 'Markdown' });
   } catch (error) {
-    bot.sendMessage(chatId, '❌ Erro ao listar despesas.');
+    bot.telegram.sendMessage(chatId, '❌ Erro ao listar despesas.');
     console.error(error);
   }
 }
@@ -1473,7 +1523,7 @@ async function calcularTotalDespesas(chatId: number, periodo: string) {
     }
     
     if (!inicio || !fim) {
-      bot.sendMessage(chatId, '❌ Período inválido.');
+      bot.telegram.sendMessage(chatId, '❌ Período inválido.');
       return;
     }
     
@@ -1514,9 +1564,9 @@ async function calcularTotalDespesas(chatId: number, periodo: string) {
     
     message += `\n💵 *TOTAL GERAL: ${formatCurrency(total)}*`;
     
-    bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+    bot.telegram.sendMessage(chatId, message, { parse_mode: 'Markdown' });
   } catch (error) {
-    bot.sendMessage(chatId, '❌ Erro ao calcular total.');
+    bot.telegram.sendMessage(chatId, '❌ Erro ao calcular total.');
     console.error(error);
   }
 }
@@ -1527,7 +1577,7 @@ async function listarOrcamentos(chatId: number, status: string) {
     const orcamentos = await db.collection('orcamentos').find(query).sort({ createdAt: -1 }).toArray();
     
     if (orcamentos.length === 0) {
-      bot.sendMessage(chatId, '📭 Não há orçamentos nesta categoria.');
+      bot.telegram.sendMessage(chatId, '📭 Não há orçamentos nesta categoria.');
       return;
     }
     
@@ -1551,9 +1601,9 @@ async function listarOrcamentos(chatId: number, status: string) {
       message += '---\n';
     }
     
-    bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+    bot.telegram.sendMessage(chatId, message, { parse_mode: 'Markdown' });
   } catch (error) {
-    bot.sendMessage(chatId, '❌ Erro ao listar orçamentos.');
+    bot.telegram.sendMessage(chatId, '❌ Erro ao listar orçamentos.');
     console.error(error);
   }
 }
@@ -1564,14 +1614,22 @@ async function start() {
     await connectDB();
     console.log('🤖 Bot Telegram iniciado!');
     
+    // Inicia o bot com polling
+    await bot.launch();
+    console.log('✅ Bot iniciado e escutando mensagens...');
+    
     // Aguarda um pouco antes de enviar mensagem para garantir que o bot está pronto
     setTimeout(async () => {
       try {
-        await bot.sendMessage(ADMIN_CHAT_ID, '🤖 Bot Recrear no Lar iniciado com sucesso!');
+        await bot.telegram.sendMessage(ADMIN_CHAT_ID, '🤖 Bot Recrear no Lar iniciado com sucesso!');
       } catch (error) {
         console.error('Erro ao enviar mensagem de inicialização:', error);
       }
     }, 2000);
+    
+    // Graceful stop
+    process.once('SIGINT', () => bot.stop('SIGINT'));
+    process.once('SIGTERM', () => bot.stop('SIGTERM'));
   } catch (error) {
     console.error('❌ Erro ao iniciar o bot:', error);
     process.exit(1);
