@@ -1,0 +1,29 @@
+name: Docker Image CI (Simple)
+
+# Versão simplificada sem push para registry
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v4
+
+    - name: Construir imagem Docker
+      run: |
+        docker build . \
+          --file Dockerfile \
+          --tag ${{ github.repository }}:latest \
+          --tag ${{ github.repository }}:${{ github.sha }}
+
+    - name: Verificar imagem
+      run: |
+        docker images ${{ github.repository }}
+        docker inspect ${{ github.repository }}:latest
+
