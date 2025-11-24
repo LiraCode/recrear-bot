@@ -1,0 +1,28 @@
+{
+    "name": "recrear-bot",
+    "version": "1.0.0",
+    "description": "Bot Telegram para Recrear no Lar",
+    "main": "dist/index.js",
+    "scripts": {
+        "build": "tsc",
+        "start": "node dist/index.js",
+        "dev": "ts-node index.ts"
+    },
+    "dependencies": {
+        "dotenv": "^16.4.7",
+        "googleapis": "^144.0.0",
+        "mongodb": "^6.10.0",
+        "node-cron": "^3.0.3",
+        "node-telegram-bot-api": "^0.66.0"
+    },
+    "devDependencies": {
+        "@types/node": "^22.10.2",
+        "@types/node-cron": "^3.0.11",
+        "@types/node-telegram-bot-api": "^0.64.13",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.7.2"
+    },
+    "engines": {
+        "node": ">=20.0.0"
+    }
+}

@@ -1,0 +1,65 @@
+# docker-compose.yml (Docker Swarm Stack)
+version: '3.8'
+
+services:
+  recrear-bot:
+    image: recrear-bot:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    networks:
+      - traefik-public
+      - recrearNet
+    environment:
+      - TZ=America/Maceio
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - ADMIN_CHAT_ID=${ADMIN_CHAT_ID}
+      - MONGODB_URI=${MONGODB_URI}
+      - GOOGLE_CREDENTIALS=${GOOGLE_CREDENTIALS}
+      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL:-}
+      - BOT_WEBHOOK_SECRET=${BOT_WEBHOOK_SECRET:-}
+      - NODE_ENV=production
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+      labels:
+        # Portainer
+        - "com.portainer.stack=recrear"
+        - "com.portainer.description=Bot Telegram Recrear no Lar"
+        # Traefik - desabilitado (bot não precisa HTTP)
+        - "traefik.enable=false"
+      placement:
+        constraints:
+          - node.role == manager
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  traefik-public:
+    external: true
+  recrearNet:
+    external: true
