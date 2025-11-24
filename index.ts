@@ -1560,9 +1560,35 @@ async function listarOrcamentos(chatId: number, status: string) {
 
 // ==================== INICIALIZAÇÃO DO BOT ====================
 async function start() {
-  await connectDB();
-  console.log('🤖 Bot Telegram iniciado!');
-  bot.sendMessage(ADMIN_CHAT_ID, '🤖 Bot Recrear no Lar iniciado com sucesso!');
+  try {
+    await connectDB();
+    console.log('🤖 Bot Telegram iniciado!');
+    
+    // Aguarda um pouco antes de enviar mensagem para garantir que o bot está pronto
+    setTimeout(async () => {
+      try {
+        await bot.sendMessage(ADMIN_CHAT_ID, '🤖 Bot Recrear no Lar iniciado com sucesso!');
+      } catch (error) {
+        console.error('Erro ao enviar mensagem de inicialização:', error);
+      }
+    }, 2000);
+  } catch (error) {
+    console.error('❌ Erro ao iniciar o bot:', error);
+    process.exit(1);
+  }
 }
 
-start().catch(console.error);
+// Tratamento de erros não capturados
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  process.exit(1);
+});
+
+start().catch((error) => {
+  console.error('Erro fatal ao iniciar:', error);
+  process.exit(1);
+});

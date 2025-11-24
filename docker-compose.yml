@@ -3,10 +3,10 @@ version: '3.8'
 
 services:
   recrear-bot:
-    image: recrear-bot:latest
     build:
       context: .
       dockerfile: Dockerfile
+    image: recrear-bot:latest
     networks:
       - traefik-public
       - recrearNet
@@ -52,11 +52,11 @@ services:
         max-size: "10m"
         max-file: "3"
     healthcheck:
-      test: ["CMD", "node", "-e", "process.exit(0)"]
+      test: ["CMD-SHELL", "node -e 'require(\"fs\").accessSync(\"/app/dist/index.js\")' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
 
 networks:
   traefik-public:
