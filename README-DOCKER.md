@@ -125,3 +125,4 @@ Para atualizar a stack:
 
 Ou via Portainer: Stack > Editor > Update Stack
 
+

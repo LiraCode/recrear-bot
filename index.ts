@@ -3,6 +3,7 @@ import { Telegraf, Markup } from 'telegraf';
 import { MongoClient, ObjectId } from 'mongodb';
 import { google } from 'googleapis';
 import cron from 'node-cron';
+import { Console } from 'console';
 
 // ==================== CONFIGURAÇÕES ====================
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -10,6 +11,7 @@ const MONGODB_URI = process.env.MONGODB_URI;
 const GOOGLE_CREDENTIALS_STR = process.env.GOOGLE_CREDENTIALS;
 const BACKOFFICE_URL = 'https://backoffice.recrearnolar.com.br';
 const ADMIN_CHAT_ID_STR = process.env.ADMIN_CHAT_ID;
+const AUTHORIZED_USERS_STR = process.env.AUTHORIZED_USERS;
 
 // Validação de variáveis de ambiente
 if (!TELEGRAM_TOKEN) {
@@ -46,6 +48,17 @@ if (isNaN(ADMIN_CHAT_ID)) {
   process.exit(1);
 }
 
+// Lista de usuários autorizados
+let AUTHORIZED_USERS: number[] = [];
+
+if (AUTHORIZED_USERS_STR) {
+  AUTHORIZED_USERS = AUTHORIZED_USERS_STR.split(',').map(id => parseInt(id.trim()));
+  console.log('👥 Usuários autorizados:', AUTHORIZED_USERS);
+} else {
+  console.warn('⚠️  AUTHORIZED_USERS não definido. Bot funcionará para todos.');
+}
+
+
 // ==================== TYPES ====================
 interface Pacote {
   _id?: ObjectId;
@@ -80,9 +93,9 @@ interface Agendamento {
 interface Despesa {
   _id?: ObjectId;
   pacoteId?: string;
-  tipo: 'pro_labore' | 'alimentacao' | 'transporte' | 'materiais' | 'marketing' | 
-        'equipamentos' | 'aluguel' | 'agua_luz' | 'telefonia' | 'impostos' | 
-        'manutencao' | 'terceirizados' | 'outros';
+  tipo: 'pro_labore' | 'alimentacao' | 'transporte' | 'materiais' | 'marketing' |
+  'equipamentos' | 'aluguel' | 'agua_luz' | 'telefonia' | 'impostos' |
+  'manutencao' | 'terceirizados' | 'outros';
   valor: number;
   data: Date;
   descricao: string;
@@ -141,7 +154,7 @@ const CALENDAR_COLORS = {
 // ==================== CONEXÃO MONGODB ====================
 async function connectDB() {
   await mongoClient.connect();
-  db = mongoClient.db('recrearnolar');
+  db = mongoClient.db();
   console.log('✅ Conectado ao MongoDB');
 }
 
@@ -161,6 +174,13 @@ function parseDate(dateStr: string): Date {
   return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
 }
 
+function escapeMarkdownV2(text: string) {
+  if (!text) return '';
+  return text.replace(/([_\[\]()~`>#+\-=|{}.!\\])/g, '\\$1')
+             .replace(/-/g, '\-')   // hífen
+             .replace(/\$/g, '\$')  // cifrão
+             .replace(/\//g, '\/'); // barra
+}
 // ==================== GOOGLE CALENDAR ====================
 async function createCalendarEvent(agendamento: Agendamento): Promise<string> {
   const event = {
@@ -218,21 +238,60 @@ async function deleteCalendarEvent(eventId: string) {
 
 // ==================== CÁLCULO DE ORÇAMENTO ====================
 function calcularValorOrcamento(orcamento: Partial<Orcamento>): number {
-  const { quantidadeCriancas = 0, quantidadeRecreadores = 1, duracao = 0, 
-          isFeriadoOuFds = false, custoDeslocamento = 0, desconto = 0 } = orcamento;
-  
+  const { quantidadeCriancas = 0, quantidadeRecreadores = 1, duracao = 0,
+    isFeriadoOuFds = false, custoDeslocamento = 0, desconto = 0 } = orcamento;
+
   // Base por hora
   const valorPorHora = quantidadeCriancas <= 15 ? 200 : 250;
   const valorBase = valorPorHora * duracao;
-  
+
   // Recreadores adicionais
   const valorRecreadores = (quantidadeRecreadores - 1) * 150;
-  
+
   // Adicional feriado/FDS
   const adicionalFeriado = isFeriadoOuFds ? 50 : 0;
-  
+
   return valorBase + valorRecreadores + adicionalFeriado + custoDeslocamento - desconto;
 }
+
+// ========================= Autenticação ==========================
+// Middleware de autenticação
+bot.use(async (ctx, next) => {
+  const userId = ctx.from?.id;
+
+  // Se não há lista de autorizados, permite todos
+  if (AUTHORIZED_USERS.length === 0) {
+    return next();
+  }
+
+  // Verifica se o usuário está autorizado
+  if (userId && AUTHORIZED_USERS.includes(userId)) {
+    return next();
+  }
+
+  // Usuário não autorizado
+  console.log(`🚫 Acesso negado para usuário: ${userId} (${ctx.from?.first_name})`);
+
+  await ctx.reply(
+    '🚫 *Acesso Negado*\n\n' +
+    'Você não tem permissão para usar este bot.\n\n' +
+    'Entre em contato com o administrador.',
+    { parse_mode: 'Markdown' }
+  );
+
+  // Notifica o admin
+  try {
+    await bot.telegram.sendMessage(
+      ADMIN_CHAT_ID,
+      `🚫 Tentativa de acesso não autorizado:\n\n` +
+      `👤 Nome: ${ctx.from?.first_name} ${ctx.from?.last_name || ''}\n` +
+      `🆔 ID: ${userId}\n` +
+      `📝 Username: @${ctx.from?.username || 'sem username'}`
+    );
+  } catch (error) {
+    console.error('Erro ao notificar admin:', error);
+  }
+});
 
 // ==================== COMANDOS - MENU PRINCIPAL ====================
 bot.command('start', (ctx) => {
@@ -277,11 +336,10 @@ bot.command('ajuda', (ctx) => {
 /relatorio_mensal - Relatório de receitas/despesas
 
 🔧 *UTILITÁRIOS*
-/status - Status do sistema
 /ajuda - Esta mensagem
   `;
-  
-  ctx.reply(helpText, { parse_mode: 'Markdown' });
+
+  ctx.reply(escapeMarkdownV2(helpText), { parse_mode: 'Markdown' });
 });
 
 // ==================== PAGAMENTOS ====================
@@ -299,17 +357,17 @@ bot.command('registrar_pagamento', async (ctx) => {
 
 bot.command('pagamentos_pendentes', async (ctx) => {
   const chatId = ctx.chat.id;
-  
+
   try {
-    const pacotes = await db.collection('pacotes').find({ isPaid: false }).toArray();
-    
+    const pacotes = await db.collection('pagamentos').find({ isPaid: false }).toArray();
+
     if (pacotes.length === 0) {
       ctx.reply('✅ Não há pagamentos pendentes!');
       return;
     }
-    
+
     let message = '📋 *PAGAMENTOS PENDENTES*\n\n';
-    
+
     for (const pacote of pacotes) {
       const responsavel = await db.collection('responsaveis').findOne({ _id: pacote.responsavelId });
       message += `👤 ${responsavel?.nome || 'Desconhecido'}\n`;
@@ -318,7 +376,7 @@ bot.command('pagamentos_pendentes', async (ctx) => {
       message += `📆 Mês: ${pacote.mesReferencia}\n`;
       message += '---\n';
     }
-    
+
     ctx.reply(message, { parse_mode: 'Markdown' });
   } catch (error) {
     ctx.reply('❌ Erro ao buscar pagamentos pendentes.');
@@ -329,27 +387,27 @@ bot.command('pagamentos_pendentes', async (ctx) => {
 // ==================== AGENDAMENTOS ====================
 bot.command('criar_agendamento', (ctx) => {
   const chatId = ctx.chat.id;
-  
+
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.callback('🎉 Evento', 'ag_tipo_evento')],
     [Markup.button.callback('🎈 Festa', 'ag_tipo_festa')],
     [Markup.button.callback('📦 Pacote', 'ag_tipo_pacote')],
     [Markup.button.callback('👤 Pessoal', 'ag_tipo_pessoal')]
   ]);
-  
+
   userStates.set(chatId, { command: 'criar_agendamento', data: {} });
   ctx.reply('Selecione o tipo de agendamento:', keyboard);
 });
 
 bot.command('listar_agendamentos', (ctx) => {
   const chatId = ctx.chat.id;
-  
+
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.callback('📅 Hoje', 'list_ag_hoje')],
     [Markup.button.callback('📆 Esta semana', 'list_ag_semana')],
     [Markup.button.callback('🗓️ Data específica', 'list_ag_data')]
   ]);
-  
+
   ctx.reply('Selecione o período:', keyboard);
 });
 
@@ -359,10 +417,16 @@ bot.command('cancelar_agendamento', (ctx) => {
   ctx.reply('📅 Digite a data do agendamento (DD/MM/AAAA):');
 });
 
+bot.command('mudar_status', (ctx) => {
+  const chatId = ctx.chat.id;
+  userStates.set(chatId, { command: 'mudar_status', step: 'data' });
+  ctx.reply('📅 Digite a data do agendamento (DD/MM/AAAA):');
+});
+
 // ==================== DESPESAS ====================
 bot.command('adicionar_despesa', (ctx) => {
   const chatId = ctx.chat.id;
-  
+
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.callback('💼 Pró-labore', 'desp_pro_labore')],
     [Markup.button.callback('🍔 Alimentação', 'desp_alimentacao')],
@@ -378,33 +442,33 @@ bot.command('adicionar_despesa', (ctx) => {
     [Markup.button.callback('👥 Terceirizados', 'desp_terceirizados')],
     [Markup.button.callback('📌 Outros', 'desp_outros')]
   ]);
-  
+
   userStates.set(chatId, { command: 'adicionar_despesa', data: {} });
   ctx.reply('Selecione o tipo de despesa:', keyboard);
 });
 
 bot.command('listar_despesas', (ctx) => {
   const chatId = ctx.chat.id;
-  
+
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.callback('📅 Hoje', 'list_desp_hoje')],
     [Markup.button.callback('📆 Esta semana', 'list_desp_semana')],
     [Markup.button.callback('🗓️ Este mês', 'list_desp_mes')],
     [Markup.button.callback('📊 Período personalizado', 'list_desp_periodo')]
   ]);
-  
+
   ctx.reply('Selecione o período:', keyboard);
 });
 
 bot.command('total_despesas', async (ctx) => {
   const chatId = ctx.chat.id;
-  
+
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.callback('📅 Hoje', 'total_desp_hoje')],
     [Markup.button.callback('📆 Esta semana', 'total_desp_semana')],
     [Markup.button.callback('🗓️ Este mês', 'total_desp_mes')]
   ]);
-  
+
   ctx.reply('Selecione o período:', keyboard);
 });
 
@@ -417,7 +481,7 @@ bot.command('criar_orcamento', (ctx) => {
 
 bot.command('listar_orcamentos', (ctx) => {
   const chatId = ctx.chat.id;
-  
+
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.callback('📝 Rascunhos', 'list_orc_rascunho')],
     [Markup.button.callback('📤 Enviados', 'list_orc_enviado')],
@@ -425,7 +489,7 @@ bot.command('listar_orcamentos', (ctx) => {
     [Markup.button.callback('🎉 Concluídos', 'list_orc_concluido')],
     [Markup.button.callback('📋 Todos', 'list_orc_todos')]
   ]);
-  
+
   ctx.reply('Filtrar por status:', keyboard);
 });
 
@@ -446,14 +510,14 @@ bot.command('relatorio_mensal', (ctx) => {
 // ==================== MESSAGE HANDLER ====================
 bot.on('text', async (ctx) => {
   if (ctx.message.text.startsWith('/')) return; // Ignora comandos
-  
+
   const chatId = ctx.chat.id;
   const state = userStates.get(chatId);
-  
+
   if (!state) return;
-  
+
   const text = ctx.message.text;
-  
+
   // ========== BUSCAR/REGISTRAR PAGAMENTO ==========
   if (state.command === 'buscar_pagamento' || state.command === 'registrar_pagamento') {
     if (state.step === 'vencimento') {
@@ -467,53 +531,60 @@ bot.on('text', async (ctx) => {
       }
     } else if (state.step === 'responsavel') {
       try {
-        const cleanText = text.trim();
-        const responsavel = await db.collection('responsaveis').findOne({ 
-          nome: new RegExp(`^${cleanText}$`, 'i')
-
+        const responsavel = await db.collection('responsaveis').findOne({
+          nome: text.trim()
         });
-        
+
         if (!responsavel) {
           ctx.reply('❌ Responsável não encontrado.');
           userStates.delete(chatId);
           return;
         }
-        
-        const pacote = await db.collection('pacotes').findOne({
+        const inicioDia = new Date(state.data.vencimento);
+        inicioDia.setHours(0, 0, 0, 0);   // 00:00:00
+
+        const fimDia = new Date(state.data.vencimento);
+        fimDia.setHours(23, 59, 59, 999); // 23:59:59
+
+        const pagamento = await db.collection('pagamentos').findOne({
           responsavelId: responsavel._id,
-          vencimento: state.data.vencimento
+          vencimento: { $gte: inicioDia, $lt: fimDia }
         });
-        
-        if (!pacote) {
-          ctx.reply('❌ Pacote não encontrado para esta data e responsável.');
+
+        console.log("Pagamento:", pagamento);
+        console.log("Vencimento:", state.data.vencimento);
+        console.log("Responsável ID:", responsavel._id);
+
+        if (!pagamento) {
+          ctx.reply('❌   pagamento não encontrado para esta data e responsável.');
           userStates.delete(chatId);
           return;
         }
-        
-        let message = `📦 *PACOTE ENCONTRADO*\n\n`;
+
+        let message = `📦 *PAGAMENTO ENCONTRADO*\n\n`;
         message += `👤 Responsável: ${responsavel.nome}\n`;
-        message += `📆 Mês: ${pacote.mesReferencia}\n`;
-        message += `💰 Valor: ${formatCurrency(pacote.valor)}\n`;
-        message += `📅 Vencimento: ${formatDate(new Date(pacote.vencimento))}\n`;
-        message += `✅ Pago: ${pacote.isPaid ? 'Sim' : 'Não'}\n`;
-        
-        if (pacote.isPaid) {
-          message += `💳 Forma: ${pacote.forma}\n`;
-          message += `📅 Pago em: ${formatDate(new Date(pacote.pagoEm))}\n`;
+        message += `📆 Mês: ${pagamento.mesReferencia}\n`;
+        message += `💰 Valor: ${formatCurrency(pagamento.valor)}\n`;
+        message += `📅 Vencimento: ${formatDate(new Date(pagamento.vencimento))}\n`;
+        message += `✅ Pago: ${pagamento.isPaid ? 'Sim' : 'Não'}\n`;
+
+        if (pagamento.isPaid) {
+          message += `💳 Forma: ${pagamento.forma}\n`;
+          message += `📅 Pago em: ${formatDate(new Date(pagamento.pagoEm))}\n`;
         }
-        
-        if (state.command === 'registrar_pagamento' && !pacote.isPaid) {
-          state.data.pacoteId = pacote._id;
+
+        if (state.command === 'registrar_pagamento' && !pagamento.isPaid) {
+          state.data.pacoteId = pagamento._id;
           state.step = 'forma';
-          
+
           const keyboard = Markup.inlineKeyboard([
             [Markup.button.callback('💳 PIX', 'pag_pix')],
             [Markup.button.callback('💵 Dinheiro', 'pag_dinheiro')],
             [Markup.button.callback('💳 Cartão', 'pag_cartao')],
             [Markup.button.callback('🏦 Transferência', 'pag_transferencia')]
           ]);
-          
-          ctx.reply(message + '\n💳 Selecione a forma de pagamento:', { 
+
+          ctx.reply(message + '\n💳 Selecione a forma de pagamento:', {
             parse_mode: 'Markdown',
             ...keyboard
           });
@@ -522,19 +593,19 @@ bot.on('text', async (ctx) => {
           userStates.delete(chatId);
         }
       } catch (error) {
-        ctx.reply('❌ Erro ao buscar pacote.');
+        ctx.reply('❌ Erro ao buscar pagamento.');
         console.error(error);
         userStates.delete(chatId);
       }
     }
   }
-  
+
   // ========== ADICIONAR DESPESA ==========
   if (state.command === 'adicionar_despesa') {
     if (state.step === 'valor') {
       state.data.valor = parseFloat(text.replace(',', '.'));
       state.step = 'data';
-      
+
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('📅 Hoje', 'desp_data_hoje')],
         [Markup.button.callback('🗓️ Outra data', 'desp_data_outra')]
@@ -550,7 +621,7 @@ bot.on('text', async (ctx) => {
       }
     } else if (state.step === 'descricao') {
       state.data.descricao = text;
-      
+
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('💳 PIX', 'desp_pag_pix')],
         [Markup.button.callback('💵 Dinheiro', 'desp_pag_dinheiro')],
@@ -559,17 +630,17 @@ bot.on('text', async (ctx) => {
         [Markup.button.callback('🏦 Transferência', 'desp_pag_transferencia')],
         [Markup.button.callback('⏭️ Pular', 'desp_pag_pular')]
       ]);
-      
+
       ctx.reply('Forma de pagamento (opcional):', keyboard);
     }
   }
-  
+
   // ========== CRIAR ORÇAMENTO ==========
   if (state.command === 'criar_orcamento') {
     if (state.step === 'cliente') {
       state.data.cliente = text;
       state.step = 'tipo';
-      
+
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('🎉 Festa', 'orc_tipo_festa')],
         [Markup.button.callback('📅 Evento', 'orc_tipo_evento')]
@@ -593,23 +664,23 @@ bot.on('text', async (ctx) => {
       ctx.reply('⏱️ Duração em horas (ex: 2 ou 1.5):');
     } else if (state.step === 'duracao') {
       state.data.duracao = parseFloat(text.replace(',', '.'));
-      
+
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('1 recreador', 'orc_rec_1')],
         [Markup.button.callback('2 recreadores', 'orc_rec_2')],
         [Markup.button.callback('3 recreadores', 'orc_rec_3')],
         [Markup.button.callback('Outro', 'orc_rec_outro')]
       ]);
-      
+
       ctx.reply('Quantidade de recreadores:', keyboard);
     } else if (state.step === 'recreadores_manual') {
       state.data.quantidadeRecreadores = parseInt(text);
-      
+
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('Sim', 'orc_fds_sim')],
         [Markup.button.callback('Não', 'orc_fds_nao')]
       ]);
-      
+
       ctx.reply('É feriado ou fim de semana?', keyboard);
     } else if (state.step === 'deslocamento') {
       state.data.custoDeslocamento = parseFloat(text.replace(',', '.')) || 0;
@@ -641,7 +712,7 @@ bot.on('text', async (ctx) => {
       if (text.toLowerCase() !== 'pular') {
         state.data.telefone = text;
       }
-      
+
       // Calcula o valor final
       state.data.valorFinal = calcularValorOrcamento(state.data);
       state.data.status = 'rascunho';
@@ -649,11 +720,11 @@ bot.on('text', async (ctx) => {
       state.data.validade = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 dias
       state.data.createdAt = new Date();
       state.data.updatedAt = new Date();
-      
+
       try {
         const result = await db.collection('orcamentos').insertOne(state.data);
         const orcamentoId = result.insertedId.toString();
-        
+
         let message = '✅ *Orçamento criado com sucesso!*\n\n';
         message += `👤 Cliente: ${state.data.cliente}\n`;
         message += `📅 Data: ${formatDate(state.data.dataEvento)}\n`;
@@ -661,7 +732,7 @@ bot.on('text', async (ctx) => {
         message += `💰 Valor: ${formatCurrency(state.data.valorFinal)}\n`;
         message += `🆔 ID: ${orcamentoId}\n\n`;
         message += `🔗 Link: ${BACKOFFICE_URL}/orcamento/${orcamentoId}`;
-        
+
         ctx.reply(message, { parse_mode: 'Markdown' });
         userStates.delete(chatId);
       } catch (error) {
@@ -671,7 +742,7 @@ bot.on('text', async (ctx) => {
       }
     }
   }
-  
+
   // ========== CRIAR AGENDAMENTO ==========
   if (state.command === 'criar_agendamento') {
     if (state.step === 'orcamento_id') {
@@ -680,16 +751,16 @@ bot.on('text', async (ctx) => {
       ctx.reply('📅 Digite a data (DD/MM/AAAA):');
     } else if (state.step === 'responsavel_nome') {
       try {
-        const responsavel = await db.collection('responsaveis').findOne({ 
-          nome: { $regex: text, $options: 'i' } 
+        const responsavel = await db.collection('responsaveis').findOne({
+          nome: { $regex: text, $options: 'i' }
         });
-        
+
         if (!responsavel) {
           ctx.reply('❌ Responsável não encontrado.');
           userStates.delete(chatId);
           return;
         }
-        
+
         state.data.responsavelId = responsavel._id;
         state.step = 'data';
         ctx.reply('📅 Digite a data (DD/MM/AAAA):');
@@ -729,15 +800,15 @@ bot.on('text', async (ctx) => {
       state.data.status = 'pendente';
       state.data.createdAt = new Date();
       state.data.updatedAt = new Date();
-      
+
       try {
         // Cria evento no Google Calendar
         const googleEventId = await createCalendarEvent(state.data);
         state.data.googleEventId = googleEventId;
-        
+
         // Salva no banco
         await db.collection('agendamentos').insertOne(state.data);
-        
+
         ctx.reply('✅ Agendamento criado com sucesso!');
         userStates.delete(chatId);
       } catch (error) {
@@ -747,7 +818,54 @@ bot.on('text', async (ctx) => {
       }
     }
   }
-  
+
+  // ========== MUDAR STATUS AGENDAMENTO ==========
+  if (state.command === 'mudar_status') {
+    if (state.step === 'data') {
+      try {
+        const data = parseDate(text); // DD/MM/AAAA
+        state.data = { data };
+        state.step = 'hora';
+        ctx.reply('⏰ Digite a hora do agendamento (formato HH:mm):');
+      } catch (error) {
+        ctx.reply('❌ Data inválida. Use o formato DD/MM/AAAA');
+      }
+    } else if (state.step === 'hora') {
+      try {
+        const inicioDia = new Date(state.data.data);
+        inicioDia.setHours(0, 0, 0, 0);
+
+        const fimDia = new Date(state.data.data);
+        fimDia.setHours(23, 59, 59, 999);
+
+        const agendamento = await db.collection('agendamentos').findOne({
+          horario: text.trim(),
+          data: { $gte: inicioDia, $lte: fimDia }
+        });
+
+        if (!agendamento) {
+          ctx.reply('❌ Nenhum agendamento encontrado para esta data/hora.');
+          userStates.delete(chatId);
+          return;
+        }
+
+        state.step = 'status';
+        state.data.agendamentoId = agendamento._id; // guarda o id para usar depois
+
+        const keyboard = Markup.inlineKeyboard([
+          [Markup.button.callback('✅ Confirmado', 'status_confirmado')],
+          [Markup.button.callback('❌ Cancelado', 'status_cancelado')],
+          [Markup.button.callback('⏳ agendado', 'status_agendado')],
+          [Markup.button.callback('📌 Concluído', 'status_concluido')]
+        ]);
+
+        ctx.reply('📌 Selecione o novo status para este agendamento:', keyboard);
+      } catch (error) {
+        ctx.reply('❌ Hora inválida. Use o formato HH:mm - ' + error);
+      }
+    }
+
+  }
   // ========== RELATÓRIO MENSAL ==========
   if (state.command === 'relatorio_mensal') {
     if (state.step === 'mes') {
@@ -761,7 +879,7 @@ bot.on('text', async (ctx) => {
       }
     }
   }
-  
+
   // ========== ENVIAR ORÇAMENTO ==========
   if (state.command === 'enviar_orcamento') {
     if (state.step === 'buscar') {
@@ -769,13 +887,13 @@ bot.on('text', async (ctx) => {
         const orcamentos = await db.collection('orcamentos').find({
           cliente: { $regex: text, $options: 'i' }
         }).sort({ createdAt: -1 }).limit(5).toArray();
-        
+
         if (orcamentos.length === 0) {
           ctx.reply('❌ Nenhum orçamento encontrado.');
           userStates.delete(chatId);
           return;
         }
-        
+
         if (orcamentos.length === 1) {
           const orc = orcamentos[0];
           const link = `${BACKOFFICE_URL}/orcamento/${orc._id}`;
@@ -800,7 +918,7 @@ bot.on('text', async (ctx) => {
       }
     }
   }
-  
+
   // ========== LISTAR AGENDAMENTOS - DATA ESPECÍFICA ==========
   if (state.command === 'listar_agendamentos') {
     if (state.step === 'data_especifica') {
@@ -810,26 +928,26 @@ bot.on('text', async (ctx) => {
         inicio.setHours(0, 0, 0, 0);
         const fim = new Date(inicio);
         fim.setDate(fim.getDate() + 1);
-        
+
         await listarAgendamentos(chatId, 'hoje');
         // Sobrescreve a data para a data específica
         const agendamentos = await db.collection('agendamentos').find({
           data: { $gte: inicio, $lt: fim },
           status: { $ne: 'cancelado' }
         }).sort({ data: 1, horario: 1 }).toArray();
-        
+
         if (agendamentos.length === 0) {
           ctx.reply('📭 Não há agendamentos para esta data.');
         } else {
           let message = `📅 *AGENDAMENTOS - ${formatDate(data)}*\n\n`;
-          
+
           const tipoEmoji: { [key: string]: string } = { evento: '🎉', festa: '🎈', pacote: '📦', pessoal: '👤' };
           const statusEmojiMap: { [key: string]: string } = { pendente: '⏳', confirmado: '✅', concluido: '🎉', cancelado: '❌' };
-          
+
           for (const ag of agendamentos) {
             const emoji = tipoEmoji[ag.tipo] || '📅';
             const statusEmoji = statusEmojiMap[ag.status] || '❓';
-            
+
             message += `${emoji} ${ag.tipo.toUpperCase()} - ${ag.horario}\n`;
             message += `📝 ${ag.descricao}\n`;
             message += `📍 ${ag.local}\n`;
@@ -837,17 +955,17 @@ bot.on('text', async (ctx) => {
             message += `${statusEmoji} ${ag.status.toUpperCase()}\n`;
             message += '---\n';
           }
-          
+
           ctx.reply(message, { parse_mode: 'Markdown' });
         }
-        
+
         userStates.delete(chatId);
       } catch (error) {
         ctx.reply('❌ Data inválida. Use DD/MM/AAAA');
       }
     }
   }
-  
+
   // ========== LISTAR DESPESAS - PERÍODO PERSONALIZADO ==========
   if (state.command === 'listar_despesas') {
     if (state.step === 'inicio') {
@@ -864,38 +982,39 @@ bot.on('text', async (ctx) => {
         const inicio = state.data.inicio;
         inicio.setHours(0, 0, 0, 0);
         fim.setHours(23, 59, 59, 999);
-        
+
         const despesas = await db.collection('despesas').find({
           data: { $gte: inicio, $lte: fim }
         }).sort({ data: -1 }).toArray();
-        
+
         if (despesas.length === 0) {
           ctx.reply('📭 Não há despesas para este período.');
           userStates.delete(chatId);
           return;
         }
-        
-        let message = `💸 *DESPESAS - ${formatDate(inicio)} a ${formatDate(fim)}*\n\n`;
+
+        let message = `💸 *DESPESAS \\- ${escapeMarkdownV2(formatDate(inicio))} a ${escapeMarkdownV2(formatDate(fim))}*\n\n`;
         let total = 0;
-        
+
         const tiposLabels: { [key: string]: string } = {
           pro_labore: '💼', alimentacao: '🍔', transporte: '🚗',
           materiais: '📦', marketing: '📢', equipamentos: '🔧',
           aluguel: '🏢', agua_luz: '💡', telefonia: '📱',
           impostos: '📋', manutencao: '🛠️', terceirizados: '👥', outros: '📌'
         };
-        
+
         for (const desp of despesas) {
-          message += `${tiposLabels[desp.tipo] || '📌'} ${desp.descricao}\n`;
-          message += `💰 ${formatCurrency(desp.valor)} - ${formatDate(desp.data)}\n`;
-          if (desp.formaPagamento) message += `💳 ${desp.formaPagamento}\n`;
-          message += '---\n';
+          message += `${tiposLabels[desp.tipo] || '📌'} ${escapeMarkdownV2(desp.descricao)}\n`;
+          message += `💰 ${escapeMarkdownV2(formatCurrency(desp.valor))} \\- ${escapeMarkdownV2(formatDate(desp.data))}\n`;
+          if (desp.formaPagamento) message += `💳 ${escapeMarkdownV2(desp.formaPagamento)}\n`;
+          message += escapeMarkdownV2('---\n');
           total += desp.valor;
         }
-        
-        message += `\n💵 *TOTAL: ${formatCurrency(total)}*`;
-        
-        ctx.reply(message, { parse_mode: 'Markdown' });
+
+        message += `\n💵 *TOTAL: ${escapeMarkdownV2(formatCurrency(total))}*`;
+
+        ctx.reply(message, { parse_mode: 'MarkdownV2' });
+        console.log(message);
         userStates.delete(chatId);
       } catch (error) {
         ctx.reply('❌ Data inválida. Use DD/MM/AAAA');
@@ -913,19 +1032,19 @@ cron.schedule('0 7 * * *', async () => {
     hoje.setHours(0, 0, 0, 0);
     const amanha = new Date(hoje);
     amanha.setDate(amanha.getDate() + 1);
-    
+
     const agendamentos = await db.collection('agendamentos').find({
       data: { $gte: hoje, $lt: amanha },
       status: { $ne: 'cancelado' }
     }).toArray();
-    
+
     if (agendamentos.length === 0) {
       bot.telegram.sendMessage(ADMIN_CHAT_ID, '☀️ Bom dia! Não há agendamentos para hoje.');
       return;
     }
-    
+
     let message = '☀️ *BOM DIA! Agendamentos de hoje:*\n\n';
-    
+
     for (const ag of agendamentos) {
       const tipoEmoji: { [key: string]: string } = { evento: '🎉', festa: '🎈', pacote: '📦', pessoal: '👤' };
       const emoji = tipoEmoji[ag.tipo] || '📅';
@@ -934,9 +1053,9 @@ cron.schedule('0 7 * * *', async () => {
       message += `📍 ${ag.local}\n`;
       message += `⏱️ ${ag.duracao}h\n\n`;
     }
-    
+
     message += `📋 Total: ${agendamentos.length} agendamento(s)`;
-    
+
     bot.telegram.sendMessage(ADMIN_CHAT_ID, message, { parse_mode: 'Markdown' });
   } catch (error) {
     console.error('Erro no lembrete diário:', error);
@@ -948,39 +1067,39 @@ cron.schedule('*/15 * * * *', async () => {
   try {
     const agora = new Date();
     const umaHoraDepois = new Date(agora.getTime() + 60 * 60 * 1000);
-    
+
     const agendamentos = await db.collection('agendamentos').find({
       status: { $ne: 'cancelado' },
       lembreteEnviado: { $ne: true }
     }).toArray();
-    
+
     for (const ag of agendamentos) {
       const dataHoraAgendamento = new Date(`${ag.data.toISOString().split('T')[0]}T${ag.horario}`);
       const diffMinutos = (dataHoraAgendamento.getTime() - agora.getTime()) / 1000 / 60;
-      
+
       // Envia lembrete entre 55 e 65 minutos antes
       if (diffMinutos >= 55 && diffMinutos <= 65) {
         const tipoEmoji: { [key: string]: string } = { evento: '🎉', festa: '🎈', pacote: '📦', pessoal: '👤' };
         const emoji = tipoEmoji[ag.tipo] || '📅';
-        
+
         let message = '⏰ *LEMBRETE - Em 1 hora!*\n\n';
         message += `${emoji} ${ag.tipo.toUpperCase()} - ${ag.horario}\n`;
         message += `📝 ${ag.descricao}\n`;
         message += `📍 ${ag.local}\n`;
         message += `⏱️ Duração: ${ag.duracao}h\n`;
         if (ag.observacoes) message += `💬 ${ag.observacoes}\n`;
-        
+
         const keyboard = Markup.inlineKeyboard([
           [Markup.button.callback('✅ Confirmar', `ag_conf_${ag._id}`)],
           [Markup.button.callback('📅 Reagendar', `ag_reag_${ag._id}`)],
           [Markup.button.callback('❌ Cancelar', `ag_canc_${ag._id}`)]
         ]);
-        
-        await bot.telegram.sendMessage(ADMIN_CHAT_ID, message, { 
+
+        await bot.telegram.sendMessage(ADMIN_CHAT_ID, message, {
           parse_mode: 'Markdown',
           ...keyboard
         });
-        
+
         // Marca como lembrete enviado
         await db.collection('agendamentos').updateOne(
           { _id: ag._id },
@@ -999,7 +1118,7 @@ cron.schedule('0 9 1 * *', async () => {
     const mesAnterior = new Date();
     mesAnterior.setMonth(mesAnterior.getMonth() - 1);
     const mesAno = `${mesAnterior.getFullYear()}-${String(mesAnterior.getMonth() + 1).padStart(2, '0')}`;
-    
+
     await enviarRelatorioMensal(ADMIN_CHAT_ID, mesAno);
   } catch (error) {
     console.error('Erro no relatório mensal automático:', error);
@@ -1012,52 +1131,52 @@ async function enviarRelatorioMensal(chatId: number, mesAno: string) {
     const [ano, mes] = mesAno.split('-');
     const inicioMes = new Date(parseInt(ano), parseInt(mes) - 1, 1);
     const fimMes = new Date(parseInt(ano), parseInt(mes), 1);
-    
+
     // RECEITAS - Orçamentos pagos
     const orcamentosPagos = await db.collection('orcamentos').find({
       status: 'concluido',
       updatedAt: { $gte: inicioMes, $lt: fimMes }
     }).toArray();
-    
+
     const receitaOrcamentos = orcamentosPagos.reduce((sum: number, o: any) => sum + o.valorFinal, 0);
-    
+
     // RECEITAS - Pacotes pagos
-    const pacotesPagos = await db.collection('pacotes').find({
+    const pacotesPagos = await db.collection('pagamentos').find({
       isPaid: true,
       pagoEm: { $gte: inicioMes, $lt: fimMes }
     }).toArray();
-    
+
     const receitaPacotes = pacotesPagos.reduce((sum: number, p: any) => sum + p.valor, 0);
-    
+
     const receitaTotal = receitaOrcamentos + receitaPacotes;
-    
+
     // DESPESAS por categoria
     const despesas = await db.collection('despesas').find({
       data: { $gte: inicioMes, $lt: fimMes }
     }).toArray();
-    
+
     const despesasPorTipo: { [key: string]: number } = {};
     let despesaTotal = 0;
-    
+
     despesas.forEach((d: any) => {
       if (!despesasPorTipo[d.tipo]) despesasPorTipo[d.tipo] = 0;
       despesasPorTipo[d.tipo] += d.valor;
       despesaTotal += d.valor;
     });
-    
+
     const saldo = receitaTotal - despesaTotal;
     const margemLucro = receitaTotal > 0 ? ((saldo / receitaTotal) * 100).toFixed(1) : '0';
-    
+
     // Formatar mensagem
     const mesNome = new Date(inicioMes).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
-    
+
     let message = `📊 *RELATÓRIO - ${mesNome.toUpperCase()}*\n\n`;
-    
+
     message += '💰 *RECEITAS*\n';
     message += `├─ Orçamentos pagos: ${formatCurrency(receitaOrcamentos)}\n`;
     message += `├─ Pacotes pagos: ${formatCurrency(receitaPacotes)}\n`;
     message += `└─ *TOTAL RECEITAS: ${formatCurrency(receitaTotal)}*\n\n`;
-    
+
     message += '💸 *DESPESAS*\n';
     const tiposLabels: { [key: string]: string } = {
       pro_labore: 'Pró-labore',
@@ -1074,14 +1193,14 @@ async function enviarRelatorioMensal(chatId: number, mesAno: string) {
       terceirizados: 'Terceirizados',
       outros: 'Outros'
     };
-    
+
     Object.keys(despesasPorTipo).sort((a, b) => despesasPorTipo[b] - despesasPorTipo[a]).forEach(tipo => {
       message += `├─ ${tiposLabels[tipo]}: ${formatCurrency(despesasPorTipo[tipo])}\n`;
     });
     message += `└─ *TOTAL DESPESAS: ${formatCurrency(despesaTotal)}*\n\n`;
-    
+
     message += `💵 *SALDO DO MÊS: ${formatCurrency(saldo)}*\n`;
-    
+
     if (saldo > 0) {
       message += `🟢 Lucro de ${margemLucro}%`;
     } else if (saldo < 0) {
@@ -1089,7 +1208,7 @@ async function enviarRelatorioMensal(chatId: number, mesAno: string) {
     } else {
       message += `⚪ Empatou no mês`;
     }
-    
+
     bot.telegram.sendMessage(chatId, message, { parse_mode: 'Markdown' });
   } catch (error) {
     bot.telegram.sendMessage(chatId, '❌ Erro ao gerar relatório mensal.');
@@ -1106,13 +1225,13 @@ bot.action(/^ag_tipo_(.+)$/, async (ctx) => {
   const state = userStates.get(chatId);
   if (state) {
     state.data.tipo = tipo;
-    
+
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('🔢 Por Orçamento', 'ag_vinc_orcamento')],
       [Markup.button.callback('👤 Por Responsável', 'ag_vinc_responsavel')],
       [Markup.button.callback('📌 Sem vínculo', 'ag_vinc_nenhum')]
     ]);
-    
+
     await ctx.editMessageText('Como deseja vincular o agendamento?', keyboard);
   }
   await ctx.answerCbQuery();
@@ -1126,7 +1245,7 @@ bot.action(/^ag_vinc_(.+)$/, async (ctx) => {
   const state = userStates.get(chatId);
   if (state) {
     state.data.vinculo = vinculo;
-    
+
     if (vinculo === 'orcamento') {
       state.step = 'orcamento_id';
       ctx.reply('🔢 Digite o ID do orçamento:');
@@ -1161,21 +1280,21 @@ bot.action(/^pag_(.+)$/, async (ctx) => {
   const chatId = ctx.chat.id;
   const forma = ctx.match[1];
   const state = userStates.get(chatId);
-  
+
   if (state && state.data && state.data.pacoteId) {
     try {
-      await db.collection('pacotes').updateOne(
+      await db.collection('pagamentos').updateOne(
         { _id: state.data.pacoteId },
-        { 
-          $set: { 
-            isPaid: true, 
+        {
+          $set: {
+            isPaid: true,
             forma: forma,
             pagoEm: new Date(),
             updatedAt: new Date()
-          } 
+          }
         }
       );
-      
+
       ctx.reply(`✅ Pagamento registrado com sucesso!\n💳 Forma: ${forma}`);
       userStates.delete(chatId);
     } catch (error) {
@@ -1216,12 +1335,12 @@ bot.action(/^desp_pag_(.+)$/, async (ctx) => {
   const chatId = ctx.chat.id;
   const forma = ctx.match[1];
   const state = userStates.get(chatId);
-  
+
   if (state && state.data) {
     if (forma !== 'pular') {
       state.data.formaPagamento = forma;
     }
-    
+
     try {
       const despesa: Despesa = {
         tipo: state.data.tipo,
@@ -1232,15 +1351,22 @@ bot.action(/^desp_pag_(.+)$/, async (ctx) => {
         createdAt: new Date(),
         updatedAt: new Date()
       };
-      
+
+      function escapeMarkdownV2(text: string) {
+        return text.replace(/([_*\[\]()~`>#+\-=|{}.!])/g, '\\$1');
+      }
+
+
       await db.collection('despesas').insertOne(despesa);
-      
+
       let message = '✅ *Despesa adicionada com sucesso!*\n\n';
-      message += `📝 ${despesa.descricao}\n`;
-      message += `💰 ${formatCurrency(despesa.valor)}\n`;
-      message += `📅 ${formatDate(despesa.data)}\n`;
-      if (despesa.formaPagamento) message += `💳 ${despesa.formaPagamento}\n`;
-      
+      message += `📝 ${escapeMarkdownV2(despesa.descricao)}\n`;
+      message += `💰 ${escapeMarkdownV2(formatCurrency(despesa.valor))}\n`;
+      message += `📅 ${escapeMarkdownV2(formatDate(despesa.data))}\n`;
+      if (despesa.formaPagamento) message += `💳 ${escapeMarkdownV2(despesa.formaPagamento)}\n`;
+
+
+
       ctx.reply(message, { parse_mode: 'Markdown' });
       userStates.delete(chatId);
     } catch (error) {
@@ -1264,26 +1390,26 @@ bot.action(/^orc_tipo_(.+)$/, async (ctx) => {
   }
   await ctx.answerCbQuery();
 });
-  
+
 // Callbacks de orçamento - recreadores
 bot.action(/^orc_rec_(.+)$/, async (ctx) => {
   if (!ctx.chat) return;
   const chatId = ctx.chat.id;
   const rec = ctx.match[1];
   const state = userStates.get(chatId);
-  
+
   if (state) {
     if (rec === 'outro') {
       state.step = 'recreadores_manual';
       ctx.reply('👥 Digite a quantidade de recreadores:');
     } else {
       state.data.quantidadeRecreadores = parseInt(rec);
-      
+
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('Sim', 'orc_fds_sim')],
         [Markup.button.callback('Não', 'orc_fds_nao')]
       ]);
-      
+
       ctx.reply('É feriado ou fim de semana?', keyboard);
     }
   }
@@ -1358,18 +1484,39 @@ bot.action(/^ag_canc_(.+)$/, async (ctx) => {
   const chatId = ctx.chat.id;
   const agId = new ObjectId(ctx.match[1]);
   const ag = await db.collection('agendamentos').findOne({ _id: agId });
-  
+
   await db.collection('agendamentos').updateOne(
     { _id: agId },
     { $set: { status: 'cancelado', updatedAt: new Date() } }
   );
-  
+
   if (ag?.googleEventId) {
     await deleteCalendarEvent(ag.googleEventId);
   }
-  
+
   ctx.reply('❌ Agendamento cancelado!');
   await ctx.answerCbQuery();
+});
+
+// callback listagem mudança de status agendamento
+bot.action(/status_(.+)/, async (ctx) => {
+  if (!ctx.chat) return;
+  const novoStatus = ctx.match[1];
+  const chatId = ctx.chat.id;
+  const state = userStates.get(chatId);
+
+  if (!state || !state.data || !state.data.agendamentoId) {
+    return ctx.reply('❌ Nenhum agendamento em andamento.');
+  }
+
+  await db.collection('agendamentos').updateOne(
+    { _id: state.data.agendamentoId },
+    { $set: { status: novoStatus, updatedAt: new Date() } }
+  );
+
+  ctx.reply(`✅ Status do agendamento alterado para: *${novoStatus}*`, { parse_mode: 'Markdown' });
+  await ctx.answerCbQuery();
+  userStates.delete(chatId);
 });
 
 // ==================== FUNÇÕES AUXILIARES DE LISTAGEM ====================
@@ -1377,7 +1524,7 @@ bot.action(/^ag_canc_(.+)$/, async (ctx) => {
 async function listarAgendamentos(chatId: number, periodo: string) {
   try {
     let inicio: Date | undefined, fim: Date | undefined;
-    
+
     if (periodo === 'hoje') {
       inicio = new Date();
       inicio.setHours(0, 0, 0, 0);
@@ -1393,31 +1540,31 @@ async function listarAgendamentos(chatId: number, periodo: string) {
       bot.telegram.sendMessage(chatId, '📅 Digite a data (DD/MM/AAAA):');
       return;
     }
-    
+
     if (!inicio || !fim) {
       bot.telegram.sendMessage(chatId, '❌ Período inválido.');
       return;
     }
-    
+
     const agendamentos = await db.collection('agendamentos').find({
       data: { $gte: inicio, $lt: fim },
       status: { $ne: 'cancelado' }
     }).sort({ data: 1, horario: 1 }).toArray();
-    
+
     if (agendamentos.length === 0) {
       bot.telegram.sendMessage(chatId, '📭 Não há agendamentos para este período.');
       return;
     }
-    
+
     let message = `📅 *AGENDAMENTOS - ${periodo.toUpperCase()}*\n\n`;
-    
+
     const tipoEmoji: { [key: string]: string } = { evento: '🎉', festa: '🎈', pacote: '📦', pessoal: '👤' };
     const statusEmojiMap: { [key: string]: string } = { pendente: '⏳', confirmado: '✅', concluido: '🎉', cancelado: '❌' };
-    
+
     for (const ag of agendamentos) {
       const emoji = tipoEmoji[ag.tipo] || '📅';
       const statusEmoji = statusEmojiMap[ag.status] || '❓';
-      
+
       message += `${emoji} ${ag.tipo.toUpperCase()} - ${formatDate(ag.data)} às ${ag.horario}\n`;
       message += `📝 ${ag.descricao}\n`;
       message += `📍 ${ag.local}\n`;
@@ -1425,7 +1572,7 @@ async function listarAgendamentos(chatId: number, periodo: string) {
       message += `${statusEmoji} ${ag.status.toUpperCase()}\n`;
       message += '---\n';
     }
-    
+
     bot.telegram.sendMessage(chatId, message, { parse_mode: 'Markdown' });
   } catch (error) {
     bot.telegram.sendMessage(chatId, '❌ Erro ao listar agendamentos.');
@@ -1436,7 +1583,7 @@ async function listarAgendamentos(chatId: number, periodo: string) {
 async function listarDespesas(chatId: number, periodo: string) {
   try {
     let inicio: Date | undefined, fim: Date | undefined;
-    
+
     if (periodo === 'hoje') {
       inicio = new Date();
       inicio.setHours(0, 0, 0, 0);
@@ -1458,42 +1605,42 @@ async function listarDespesas(chatId: number, periodo: string) {
       bot.telegram.sendMessage(chatId, '📅 Digite a data inicial (DD/MM/AAAA):');
       return;
     }
-    
+
     if (!inicio || !fim) {
       bot.telegram.sendMessage(chatId, '❌ Período inválido.');
       return;
     }
-    
+
     const despesas = await db.collection('despesas').find({
       data: { $gte: inicio, $lt: fim }
     }).sort({ data: -1 }).toArray();
-    
+
     if (despesas.length === 0) {
       bot.telegram.sendMessage(chatId, '📭 Não há despesas para este período.');
       return;
     }
-    
-    let message = `💸 *DESPESAS - ${periodo.toUpperCase()}*\n\n`;
+
+    let message = `💸 *DESPESAS \\- ${escapeMarkdownV2(periodo.toUpperCase())}*\n\n`;
     let total = 0;
-    
+
     const tiposLabels: { [key: string]: string } = {
       pro_labore: '💼', alimentacao: '🍔', transporte: '🚗',
       materiais: '📦', marketing: '📢', equipamentos: '🔧',
       aluguel: '🏢', agua_luz: '💡', telefonia: '📱',
       impostos: '📋', manutencao: '🛠️', terceirizados: '👥', outros: '📌'
     };
-    
+
     for (const desp of despesas) {
-      message += `${tiposLabels[desp.tipo]} ${desp.descricao}\n`;
-      message += `💰 ${formatCurrency(desp.valor)} - ${formatDate(desp.data)}\n`;
-      if (desp.formaPagamento) message += `💳 ${desp.formaPagamento}\n`;
-      message += '---\n';
+      message += `${tiposLabels[desp.tipo]} ${escapeMarkdownV2(desp.descricao)}\n`;
+      message += `💰 ${escapeMarkdownV2(formatCurrency(desp.valor))} \\- ${escapeMarkdownV2(formatDate(desp.data))}\n`;
+      if (desp.formaPagamento) message += `💳 ${escapeMarkdownV2(desp.formaPagamento)}\n`;
+      message += escapeMarkdownV2('---\n');
       total += desp.valor;
     }
-    
-    message += `\n💵 *TOTAL: ${formatCurrency(total)}*`;
-    
-    bot.telegram.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+
+    message += `\n💵 *TOTAL: ${escapeMarkdownV2(formatCurrency(total))}*`;
+
+    bot.telegram.sendMessage(chatId, message, { parse_mode: 'MarkdownV2' });
   } catch (error) {
     bot.telegram.sendMessage(chatId, '❌ Erro ao listar despesas.');
     console.error(error);
@@ -1503,7 +1650,7 @@ async function listarDespesas(chatId: number, periodo: string) {
 async function calcularTotalDespesas(chatId: number, periodo: string) {
   try {
     let inicio: Date | undefined, fim: Date | undefined;
-    
+
     if (periodo === 'hoje') {
       inicio = new Date();
       inicio.setHours(0, 0, 0, 0);
@@ -1521,27 +1668,27 @@ async function calcularTotalDespesas(chatId: number, periodo: string) {
       fim = new Date(inicio);
       fim.setMonth(fim.getMonth() + 1);
     }
-    
+
     if (!inicio || !fim) {
       bot.telegram.sendMessage(chatId, '❌ Período inválido.');
       return;
     }
-    
+
     const despesas = await db.collection('despesas').find({
       data: { $gte: inicio, $lt: fim }
     }).toArray();
-    
+
     const despesasPorTipo: { [key: string]: number } = {};
     let total = 0;
-    
+
     despesas.forEach((d: any) => {
       if (!despesasPorTipo[d.tipo]) despesasPorTipo[d.tipo] = 0;
       despesasPorTipo[d.tipo] += d.valor;
       total += d.valor;
     });
-    
+
     let message = `💸 *TOTAL DESPESAS - ${periodo.toUpperCase()}*\n\n`;
-    
+
     const tiposLabels: { [key: string]: string } = {
       pro_labore: 'Pró-labore',
       alimentacao: 'Alimentação',
@@ -1557,13 +1704,13 @@ async function calcularTotalDespesas(chatId: number, periodo: string) {
       terceirizados: 'Terceirizados',
       outros: 'Outros'
     };
-    
+
     Object.keys(despesasPorTipo).sort((a, b) => despesasPorTipo[b] - despesasPorTipo[a]).forEach(tipo => {
       message += `${tiposLabels[tipo]}: ${formatCurrency(despesasPorTipo[tipo])}\n`;
     });
-    
+
     message += `\n💵 *TOTAL GERAL: ${formatCurrency(total)}*`;
-    
+
     bot.telegram.sendMessage(chatId, message, { parse_mode: 'Markdown' });
   } catch (error) {
     bot.telegram.sendMessage(chatId, '❌ Erro ao calcular total.');
@@ -1575,14 +1722,14 @@ async function listarOrcamentos(chatId: number, status: string) {
   try {
     const query = status === 'todos' ? {} : { status };
     const orcamentos = await db.collection('orcamentos').find(query).sort({ createdAt: -1 }).toArray();
-    
+
     if (orcamentos.length === 0) {
       bot.telegram.sendMessage(chatId, '📭 Não há orçamentos nesta categoria.');
       return;
     }
-    
+
     let message = `📊 *ORÇAMENTOS - ${status.toUpperCase()}*\n\n`;
-    
+
     const statusEmoji: { [key: string]: string } = {
       rascunho: '📝',
       enviado: '📤',
@@ -1590,7 +1737,7 @@ async function listarOrcamentos(chatId: number, status: string) {
       concluido: '🎉',
       cancelado: '❌'
     };
-    
+
     for (const orc of orcamentos) {
       message += `${statusEmoji[orc.status]} ${orc.cliente}\n`;
       message += `${orc.tipo === 'festa' ? '🎈' : '📅'} ${orc.tipo.toUpperCase()}\n`;
@@ -1600,7 +1747,7 @@ async function listarOrcamentos(chatId: number, status: string) {
       message += `🆔 ${orc._id}\n`;
       message += '---\n';
     }
-    
+
     bot.telegram.sendMessage(chatId, message, { parse_mode: 'Markdown' });
   } catch (error) {
     bot.telegram.sendMessage(chatId, '❌ Erro ao listar orçamentos.');
@@ -1613,11 +1760,11 @@ async function start() {
   try {
     await connectDB();
     console.log('🤖 Bot Telegram iniciado!');
-    
+
     // Inicia o bot com polling
     await bot.launch();
     console.log('✅ Bot iniciado e escutando mensagens...');
-    
+
     // Aguarda um pouco antes de enviar mensagem para garantir que o bot está pronto
     setTimeout(async () => {
       try {
@@ -1626,7 +1773,7 @@ async function start() {
         console.error('Erro ao enviar mensagem de inicialização:', error);
       }
     }, 2000);
-    
+
     // Graceful stop
     process.once('SIGINT', () => bot.stop('SIGINT'));
     process.once('SIGTERM', () => bot.stop('SIGTERM'));

@@ -60,7 +60,4 @@ Veja [README-DOCKER.md](./README-DOCKER.md) para instruções de deploy no Docke
 
 Use `/ajuda` no bot para ver todos os comandos disponíveis.
 
-## 🔒 Segurança
-
-Este projeto foi migrado para **Telegraf** (biblioteca moderna e segura). Veja [SECURITY.md](./SECURITY.md) para mais detalhes.
 
