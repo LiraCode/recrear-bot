@@ -3,7 +3,6 @@ import { Telegraf, Markup } from 'telegraf';
 import { MongoClient, ObjectId } from 'mongodb';
 import { google } from 'googleapis';
 import cron from 'node-cron';
-import { Console } from 'console';
 
 // ==================== CONFIGURAÇÕES ====================
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -307,36 +306,36 @@ bot.command('ajuda', (ctx) => {
 📋 *COMANDOS DISPONÍVEIS*
 
 💰 *PAGAMENTOS*
-/buscar_pagamento - Consultar pagamento
-/registrar_pagamento - Registrar pagamento de pacote
-/pagamentos_pendentes - Listar pacotes não pagos
+/buscar_pagamento -- Consultar pagamento
+/registrar_pagamento -- Registrar pagamento de pacote
+/pagamentos_pendentes -- Listar pacotes não pagos
 
 📅 *AGENDAMENTOS*
-/criar_agendamento - Criar novo agendamento
-/listar_agendamentos - Ver agendamentos
-/editar_agendamento - Editar agendamento
-/cancelar_agendamento - Cancelar agendamento
-/mudar_status - Alterar status
+/criar_agendamento -- Criar novo agendamento
+/listar_agendamentos -- Ver agendamentos
+/editar_agendamento -- Editar agendamento
+/cancelar_agendamento -- Cancelar agendamento
+/mudar_status -- Alterar status
 
 💸 *DESPESAS*
-/adicionar_despesa - Registrar despesa
-/listar_despesas - Ver despesas
-/editar_despesa - Editar despesa
-/excluir_despesa - Remover despesa
-/total_despesas - Total por período
+/adicionar_despesa -- Registrar despesa
+/listar_despesas -- Ver despesas
+/editar_despesa -- Editar despesa
+/excluir_despesa -- Remover despesa
+/total_despesas -- Total por período
 
 📊 *ORÇAMENTOS*
-/criar_orcamento - Criar orçamento
-/listar_orcamentos - Ver orçamentos
-/editar_orcamento - Editar orçamento
-/mudar_status_orcamento - Alterar status
-/enviar_orcamento - Enviar link do orçamento
+/criar_orcamento -- Criar orçamento
+/listar_orcamentos -- Ver orçamentos
+/editar_orcamento -- Editar orçamento
+/mudar_status_orcamento -- Alterar status
+/enviar_orcamento -- Enviar link do orçamento
 
 📈 *RELATÓRIOS*
-/relatorio_mensal - Relatório de receitas/despesas
+/relatorio_mensal -- Relatório de receitas/despesas
 
 🔧 *UTILITÁRIOS*
-/ajuda - Esta mensagem
+/ajuda -- Esta mensagem
   `;
 
   ctx.reply(escapeMarkdownV2(helpText), { parse_mode: 'Markdown' });
@@ -1025,8 +1024,8 @@ bot.on('text', async (ctx) => {
 
 // ==================== LEMBRETES E CRON JOBS ====================
 
-// Lembrete diário às 7h
-cron.schedule('0 7 * * *', async () => {
+// Lembrete diário às 6h
+cron.schedule('0 6 * * *', async () => {
   try {
     const hoje = new Date();
     hoje.setHours(0, 0, 0, 0);
@@ -1039,7 +1038,7 @@ cron.schedule('0 7 * * *', async () => {
     }).toArray();
 
     if (agendamentos.length === 0) {
-      bot.telegram.sendMessage(ADMIN_CHAT_ID, '☀️ Bom dia! Não há agendamentos para hoje.');
+      bot.telegram.sendMessage(ADMIN_CHAT_ID, '☀️ Bom dia! Não há agendamentos no sistema para hoje.');
       return;
     }
 
@@ -1112,8 +1111,8 @@ cron.schedule('*/15 * * * *', async () => {
   }
 });
 
-// Relatório mensal automático - dia 1º às 9h
-cron.schedule('0 9 1 * *', async () => {
+// Relatório mensal automático - dia 1º às 8h
+cron.schedule('0 8 1 * *', async () => {
   try {
     const mesAnterior = new Date();
     mesAnterior.setMonth(mesAnterior.getMonth() - 1);
