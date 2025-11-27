@@ -1737,7 +1737,7 @@ async function listarOrcamentos(chatId: number, status: string) {
       return;
     }
 
-    let message = `📊 *ORÇAMENTOS - ${escapeMarkdownV2(status.toUpperCase())}*\n\n`;
+    let message = `📊 *ORÇAMENTOS \\- ${escapeMarkdownV2(status.toUpperCase())}*\n\n`;
 
     const statusEmoji: { [key: string]: string } = {
       rascunho: '📝',
