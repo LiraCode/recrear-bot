@@ -730,7 +730,7 @@ bot.on('text', async (ctx) => {
         message += `⏰ Horário: ${state.data.horario}\n`;
         message += `💰 Valor: ${formatCurrency(state.data.valorFinal)}\n`;
         message += `🆔 ID: ${orcamentoId}\n\n`;
-        message += `🔗 Link: ${BACKOFFICE_URL}/orcamento/${orcamentoId}`;
+        message += `🔗 Link: ${BACKOFFICE_URL}/orcamentos/vizualizar/${orcamentoId}`;
 
         ctx.reply(message, { parse_mode: 'Markdown' });
         userStates.delete(chatId);
