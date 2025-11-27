@@ -1727,7 +1727,7 @@ async function listarOrcamentos(chatId: number, status: string) {
       return;
     }
 
-    let message = `📊 *ORÇAMENTOS - ${status.toUpperCase()}*\n\n`;
+    let message = `📊 *ORÇAMENTOS - ${escapeMarkdownV2(status.toUpperCase())}*\n\n`;
 
     const statusEmoji: { [key: string]: string } = {
       rascunho: '📝',
@@ -1738,16 +1738,16 @@ async function listarOrcamentos(chatId: number, status: string) {
     };
 
     for (const orc of orcamentos) {
-      message += `${statusEmoji[orc.status]} ${orc.cliente}\n`;
-      message += `${orc.tipo === 'festa' ? '🎈' : '📅'} ${orc.tipo.toUpperCase()}\n`;
-      message += `📅 ${formatDate(orc.dataEvento)} às ${orc.horario}\n`;
-      message += `💰 ${formatCurrency(orc.valorFinal)}\n`;
-      message += `📍 ${orc.endereco}\n`;
-      message += `🆔 ${orc._id}\n`;
-      message += '---\n';
+      message += `${statusEmoji[orc.status]} ${escapeMarkdownV2(orc.cliente)}\n`;
+      message += `${orc.tipo === 'festa' ? '🎈' : '📅'} ${escapeMarkdownV2(orc.tipo.toUpperCase())}\n`;
+      message += `📅 ${escapeMarkdownV2(formatDate(orc.dataEvento))} às ${escapeMarkdownV2(orc.horario)}\n`;
+      message += `💰 ${escapeMarkdownV2(formatCurrency(orc.valorFinal))}\n`;
+      message += `📍 ${escapeMarkdownV2(orc.endereco)}\n`;
+      message += `🆔 ${escapeMarkdownV2(String(orc._id))}\n`;
+      message += `\\-\\-\\-\n`; // separador seguro
     }
 
-    bot.telegram.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+    bot.telegram.sendMessage(chatId, message, { parse_mode: 'MarkdownV2' });
   } catch (error) {
     bot.telegram.sendMessage(chatId, '❌ Erro ao listar orçamentos.');
     console.error(error);
