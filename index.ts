@@ -740,7 +740,7 @@ bot.on('text', async (ctx) => {
         message += `⏰ Horário: ${state.data.horario}\n`;
         message += `💰 Valor: ${formatCurrency(state.data.valorFinal)}\n`;
         message += `🆔 ID: ${orcamentoId}\n\n`;
-        message += `🔗 Link: ${BACKOFFICE_URL}/orcamentos/vizualizar/${orcamentoId}`;
+        message += `🔗 Link: ${BACKOFFICE_URL}/orcamentos/visualizar/${orcamentoId}`;
 
         ctx.reply(message, { parse_mode: 'Markdown' });
         userStates.delete(chatId);
@@ -905,7 +905,7 @@ bot.on('text', async (ctx) => {
 
         if (orcamentos.length === 1) {
           const orc = orcamentos[0];
-          const link = `${BACKOFFICE_URL}/orcamento/${orc._id}`;
+          const link = `${BACKOFFICE_URL}/orcamentos/visualizar/${orc._id}`;
           ctx.reply(`🔗 Link do orçamento:\n${link}`);
           userStates.delete(chatId);
         } else {
@@ -915,7 +915,7 @@ bot.on('text', async (ctx) => {
             message += `👤 ${orc.cliente}\n`;
             message += `📅 ${formatDate(orc.dataEvento)}\n`;
             message += `💰 ${formatCurrency(orc.valorFinal)}\n`;
-            message += `🔗 ${BACKOFFICE_URL}/orcamento/${orc._id}\n\n`;
+            message += `🔗 ${BACKOFFICE_URL}/orcamentos/visualizar/${orc._id}\n\n`;
           }
           ctx.reply(message, { parse_mode: 'Markdown' });
           userStates.delete(chatId);
