@@ -164,10 +164,20 @@ function formatCurrency(value: number): string {
   return `R$ ${value.toFixed(2).replace('.', ',')}`;
 }
 
-function formatDate(date: Date): string {
-  return date.toLocaleDateString('pt-BR');
+function formatDate(date: any) {
+  if (!date) return '';
+  try {
+    const d = (date instanceof Date) ? date : new Date(date);
+    if (isNaN(d.getTime())) {
+      // fallback se for string no formato DD/MM/AAAA
+      const [dia, mes, ano] = String(date).split('/');
+      return `${dia.padStart(2,'0')}/${mes.padStart(2,'0')}/${ano}`;
+    }
+    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  } catch {
+    return String(date);
+  }
 }
-
 function parseDate(dateStr: string): Date {
   const [day, month, year] = dateStr.split('/');
   return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
