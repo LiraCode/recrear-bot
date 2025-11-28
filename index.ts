@@ -305,7 +305,7 @@ bot.use(async (ctx, next) => {
 // ==================== COMANDOS - MENU PRINCIPAL ====================
 bot.command('start', (ctx) => {
   ctx.reply(
-    '🎉 *Bem-vindo ao Bot Recrear no Lar!*\n\n' +
+    '🎉 \\*Bem-vindo ao Bot Recrear no Lar!*\n\n' +
     'Use /ajuda para ver todos os comandos disponíveis.',
     { parse_mode: 'Markdown' }
   );
@@ -313,42 +313,42 @@ bot.command('start', (ctx) => {
 
 bot.command('ajuda', (ctx) => {
   const helpText = `
-📋 *COMANDOS DISPONÍVEIS*
+📋 \\*COMANDOS DISPONÍVEIS\\*
 
-💰 *PAGAMENTOS*
-/buscar_pagamento -- Consultar pagamento
-/registrar_pagamento -- Registrar pagamento de pacote
-/pagamentos_pendentes -- Listar pacotes não pagos
+💰 \\*PAGAMENTOS\\*
+/buscar\\_pagamento \\- Consultar pagamento
+/registrar\\_pagamento \\- Registrar pagamento de pacote
+/pagamentos\\_pendentes \\- Listar pacotes não pagos
 
-📅 *AGENDAMENTOS*
-/criar_agendamento -- Criar novo agendamento
-/listar_agendamentos -- Ver agendamentos
-/editar_agendamento -- Editar agendamento
-/cancelar_agendamento -- Cancelar agendamento
-/mudar_status -- Alterar status
+📅 \\*AGENDAMENTOS\\*
+/criar\\_agendamento \\- Criar novo agendamento
+/listar\\_agendamentos \\- Ver agendamentos
+/editar\\_agendamento \\- Editar agendamento
+/cancelar\\_agendamento \\- Cancelar agendamento
+/mudar\\_status \\- Alterar status
 
-💸 *DESPESAS*
-/adicionar_despesa -- Registrar despesa
-/listar_despesas -- Ver despesas
-/editar_despesa -- Editar despesa
-/excluir_despesa -- Remover despesa
-/total_despesas -- Total por período
+💸 \\*DESPESAS\\*
+/adicionar\\_despesa \\- Registrar despesa
+/listar\\_despesas \\- Ver despesas
+/editar\\_despesa \\- Editar despesa
+/excluir\\_despesa \\- Remover despesa
+/total\\_despesas \\- Total por período
 
-📊 *ORÇAMENTOS*
-/criar_orcamento -- Criar orçamento
-/listar_orcamentos -- Ver orçamentos
-/editar_orcamento -- Editar orçamento
-/mudar_status_orcamento -- Alterar status
-/enviar_orcamento -- Enviar link do orçamento
+📊 \\*ORÇAMENTOS\\*
+/criar\\_orcamento \\- Criar orçamento
+/listar\\_orcamentos \\- Ver orçamentos
+/editar\\_orcamento \\- Editar orçamento
+/mudar\\_status\\_orcamento \\- Alterar status
+/enviar\\_orcamento \\- Enviar link do orçamento
 
-📈 *RELATÓRIOS*
-/relatorio_mensal -- Relatório de receitas/despesas
+📈 \\*RELATÓRIOS\\*
+/relatorio\\_mensal \\- Relatório de receitas/despesas
 
-🔧 *UTILITÁRIOS*
-/ajuda -- Esta mensagem
+🔧 \\*UTILITÁRIOS\\*
+/ajuda \\- Esta mensagem
   `;
 
-  ctx.reply(escapeMarkdownV2(helpText), { parse_mode: 'Markdown' });
+  ctx.reply(helpText, { parse_mode: 'Markdown' });
 });
 
 // ==================== PAGAMENTOS ====================
