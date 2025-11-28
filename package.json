@@ -1,6 +1,6 @@
 {
     "name": "recrear-bot",
-    "version": "1.0.0",
+    "version": "1.3.20",
     "description": "Bot Telegram para Recrear no Lar",
     "main": "dist/index.js",
     "scripts": {
