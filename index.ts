@@ -3,6 +3,7 @@ import { Telegraf, Markup } from 'telegraf';
 import { MongoClient, ObjectId } from 'mongodb';
 import { google } from 'googleapis';
 import cron from 'node-cron';
+import { admin } from 'googleapis/build/src/apis/admin';
 
 // ==================== CONFIGURAÇÕES ====================
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -41,11 +42,15 @@ try {
   process.exit(1);
 }
 
-const ADMIN_CHAT_ID = parseInt(ADMIN_CHAT_ID_STR);
-if (isNaN(ADMIN_CHAT_ID)) {
-  console.error('❌ Erro: ADMIN_CHAT_ID não é um número válido');
-  process.exit(1);
+let ADMIN_CHAT_ID: number[] = [];
+if(ADMIN_CHAT_ID_STR){
+
+  ADMIN_CHAT_ID = ADMIN_CHAT_ID_STR.split(',').map(id => parseInt(id.trim()));
+  console.log('👥 Envio de Mensagens automáticas para :', ADMIN_CHAT_ID);
+} else {
+  console.warn('⚠️    ADMIN_CHAT_ID não definido. ninguem receberá as mensagens automáticas.');
 }
+
 
 // Lista de usuários autorizados
 let AUTHORIZED_USERS: number[] = [];
@@ -305,18 +310,21 @@ bot.use(async (ctx, next) => {
   );
 
   // Notifica o admin
-  try {
-    await bot.telegram.sendMessage(
-      ADMIN_CHAT_ID,
-      `🚫 Tentativa de acesso não autorizado:\n\n` +
-      `👤 Nome: ${ctx.from?.first_name} ${ctx.from?.last_name || ''}\n` +
-      `🆔 ID: ${userId}\n` +
-      `📝 Username: @${ctx.from?.username || 'sem username'}`
-    );
-  } catch (error) {
-    console.error('Erro ao notificar admin:', error);
-  }
-});
+  try { 
+    const mensagem = 
+    `🚫 Tentativa de acesso não autorizado:\n\n` +
+    `👤 Nome: ${ctx.from?.first_name} ${ctx.from?.last_name || ''}\n` +
+    `🆔 ID: ${userId}\n` +
+    `📝 Username: @${ctx.from?.username || 'sem username'}`;
+
+    for (const adminId of ADMIN_CHAT_ID) {
+    await bot.telegram.sendMessage( adminId, mensagem );
+    }
+    
+ } catch (error) { console.error('Erro ao notificar admin:', error); } });
+
+  
+  
 
 // ==================== COMANDOS - MENU PRINCIPAL ====================
 bot.command('start', (ctx) => {
@@ -959,19 +967,20 @@ bot.on('text', async (ctx) => {
       state.step = 'data';
       userStates.set(chatId, state);
 
-      ctx.reply('📅 Agora digite a data do evento (formato YYYY-MM-DD):');
+      ctx.reply('📅 Agora digite a data do evento (formato DD/MM/AAAA):');
       return;
     }
     if (state.step === 'data') {
-      state.dataEvento = ctx.message.text;
+      const dataEvento = parseDate(text)
+      state.dataEvento = { dataEvento }
       state.step = 'buscar';
       userStates.set(chatId, state);
 
       try {
-        const inicioDia = new Date(state.dataEvento);
+        const inicioDia = new Date (state.dataEvento.dataEvento);
         inicioDia.setHours(0, 0, 0, 0);
 
-        const fimDia = new Date(state.dataEvento);
+        const fimDia = new Date(state.dataEvento.dataEvento);
         fimDia.setHours(23, 59, 59, 999);
 
         const orcamentos = await db.collection('orcamentos').find({
@@ -979,32 +988,38 @@ bot.on('text', async (ctx) => {
           dataEvento: { $gte: inicioDia, $lt: fimDia }
         }).sort({ createdAt: -1 }).limit(5).toArray();
 
+
         if (orcamentos.length === 0) {
           ctx.reply('❌ Nenhum orçamento encontrado.');
           userStates.delete(chatId);
           return;
         }
 
-        //Cria botões para cada orçamento encontrado
-        const botoesOrcamentos = orcamentos.map((o: Orcamento) => [
-          {
-            text:
-              `📄 Cliente: ${o.cliente}\n` +
-              `🆔 ID: ${o._id}\n` +
-              `📅 Data: ${formatDate(o.dataEvento)}\n` +
-              `⏰ Horário: ${o.horario}\n` +
-              `🕒 Duração: ${o.duracao}\n` +
-              `💰 Valor: R$ ${o.valorFinal}\n` +
-              `📌 Status: ${o.status}`,
-            callback_data: `editar_status:${o._id}`
-          }
-        ]);
+        // Primeiro envia os detalhes em mensagens
+for (const o of orcamentos) {
+  await ctx.reply(
+    `📄 Cliente: ${o.cliente}\n` +
+    `🆔 ID: ${o._id}\n` +
+    `📅 Data: ${formatDate(o.dataEvento)}\n` +
+    `⏰ Horário: ${o.horario}\n` +
+    `🕒 Duração: ${o.duracao}\n` +
+    `💰 Valor: R$ ${o.valorFinal}\n` +
+    `📌 Status: ${o.status}`
+  );
+}
 
+// Depois cria botões resumidos
+const botoesOrcamentos = orcamentos.map((o: Orcamento) => [
+  {
+    text: `📄 ${o.cliente} | ${o.duracao} | ${o.status}`,
+    callback_data: `editar_status:${o._id}`
+  }
+]);
 
-        await ctx.reply(
-          '📌 Selecione o orçamento para editar o status:',
-          { reply_markup: { inline_keyboard: botoesOrcamentos } }
-        );
+await ctx.reply(
+  '📌 Selecione o orçamento para editar o status:',
+  { reply_markup: { inline_keyboard: botoesOrcamentos } }
+);
 
       } catch (error) {
         console.error(error);
@@ -1136,7 +1151,9 @@ cron.schedule('0 6 * * *', async () => {
     }).toArray();
 
     if (agendamentos.length === 0) {
-      bot.telegram.sendMessage(ADMIN_CHAT_ID, '☀️ Bom dia! Não há agendamentos no sistema para hoje.');
+      for (const adminId of ADMIN_CHAT_ID) {
+        bot.telegram.sendMessage(adminId, '☀️ Bom dia! Não há agendamentos no sistema para hoje.');
+      }
       return;
     }
 
@@ -1152,8 +1169,9 @@ cron.schedule('0 6 * * *', async () => {
     }
 
     message += `📋 Total: ${agendamentos.length} agendamento(s)`;
-
-    bot.telegram.sendMessage(ADMIN_CHAT_ID, message, { parse_mode: 'Markdown' });
+    for (const adminId of ADMIN_CHAT_ID) {
+    bot.telegram.sendMessage(adminId, message, { parse_mode: 'Markdown' });
+    }
   } catch (error) {
     console.error('Erro no lembrete diário:', error);
   }
@@ -1191,11 +1209,11 @@ cron.schedule('*/15 * * * *', async () => {
           [Markup.button.callback('📅 Reagendar', `ag_reag_${ag._id}`)],
           [Markup.button.callback('❌ Cancelar', `ag_canc_${ag._id}`)]
         ]);
-
-        await bot.telegram.sendMessage(ADMIN_CHAT_ID, message, {
+        for (const adminId of ADMIN_CHAT_ID) {
+        await bot.telegram.sendMessage(adminId, message, {
           parse_mode: 'Markdown',
           ...keyboard
-        });
+        });}
 
         // Marca como lembrete enviado
         await db.collection('agendamentos').updateOne(
@@ -1215,8 +1233,9 @@ cron.schedule('0 8 1 * *', async () => {
     const mesAnterior = new Date();
     mesAnterior.setMonth(mesAnterior.getMonth() - 1);
     const mesAno = `${mesAnterior.getFullYear()}-${String(mesAnterior.getMonth() + 1).padStart(2, '0')}`;
-
-    await enviarRelatorioMensal(ADMIN_CHAT_ID, mesAno);
+    for (const adminId of ADMIN_CHAT_ID) {
+    await enviarRelatorioMensal(adminId, mesAno);
+    }
   } catch (error) {
     console.error('Erro no relatório mensal automático:', error);
   }
@@ -1929,7 +1948,9 @@ async function start() {
     // Aguarda um pouco antes de enviar mensagem para garantir que o bot está pronto
     setTimeout(async () => {
       try {
-        await bot.telegram.sendMessage(ADMIN_CHAT_ID, '🤖 Bot Recrear no Lar iniciado com sucesso!');
+        for (const adminId of ADMIN_CHAT_ID) {
+        await bot.telegram.sendMessage(adminId, '🤖 Bot Recrear no Lar iniciado com sucesso!');
+        }
       } catch (error) {
         console.error('Erro ao enviar mensagem de inicialização:', error);
       }
