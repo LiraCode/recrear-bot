@@ -164,20 +164,36 @@ function formatCurrency(value: number): string {
   return `R$ ${value.toFixed(2).replace('.', ',')}`;
 }
 
-function formatDate(date: any) {
+function formatDate(date: string | Date | null | undefined): string {
   if (!date) return '';
+
   try {
-    const d = (date instanceof Date) ? date : new Date(date);
-    if (isNaN(d.getTime())) {
-      // fallback se for string no formato DD/MM/AAAA
-      const [dia, mes, ano] = String(date).split('/');
+    const d = date instanceof Date ? date : new Date(date);
+
+    if (!isNaN(d.getTime())) {
+      // Data válida
+      return d.toLocaleDateString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      });
+    }
+
+    // Fallback para string no formato DD/MM/AAAA
+    const parts = String(date).split('/');
+    if (parts.length === 3) {
+      const [dia, mes, ano] = parts;
       return `${dia.padStart(2, '0')}/${mes.padStart(2, '0')}/${ano}`;
     }
-    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+    // um fallback pra retornar string
+    return String(date);
   } catch {
     return String(date);
   }
 }
+
+
 function parseDate(dateStr: string): Date {
   const [day, month, year] = dateStr.split('/');
   return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
@@ -510,7 +526,7 @@ bot.command('enviar_orcamento', (ctx) => {
 
 bot.command('status_orcamento', (ctx) => {
   const chatId = ctx.chat.id;
-  userStates.set(chatId, { command: 'status_orcamento', step: 'buscar' });
+  userStates.set(chatId, { command: 'status_orcamento', step: 'cliente' });
   ctx.reply('🔍 Digite o nome do cliente para buscar o orçamento:');
 });
 
@@ -938,16 +954,28 @@ bot.on('text', async (ctx) => {
 
   // ========== STATUS ORÇAMENTO ==========
   if (state.command === 'status_orcamento') {
-    if (state.step === 'buscar') {
+    if (state.step == 'cliente') {
+      state.cliente = ctx.message.text;
+      state.step = 'data';
+      userStates.set(chatId, state);
+
+      ctx.reply('📅 Agora digite a data do evento (formato YYYY-MM-DD):');
+      return;
+    }
+    if (state.step === 'data') {
+      state.dataEvento = ctx.message.text;
+      state.step = 'buscar';
+      userStates.set(chatId, state);
+
       try {
-        const inicioDia = new Date(state.data.data);
+        const inicioDia = new Date(state.dataEvento);
         inicioDia.setHours(0, 0, 0, 0);
 
-        const fimDia = new Date(state.data.data);
+        const fimDia = new Date(state.dataEvento);
         fimDia.setHours(23, 59, 59, 999);
 
         const orcamentos = await db.collection('orcamentos').find({
-          cliente: { $regex: text, $options: 'i' },
+          cliente: { $regex: state.cliente, $options: 'i' },
           dataEvento: { $gte: inicioDia, $lt: fimDia }
         }).sort({ createdAt: -1 }).limit(5).toArray();
 
@@ -957,13 +985,13 @@ bot.on('text', async (ctx) => {
           return;
         }
 
-        // Cria botões para cada orçamento encontrado
+        //Cria botões para cada orçamento encontrado
         const botoesOrcamentos = orcamentos.map((o: Orcamento) => [
           {
             text:
               `📄 Cliente: ${o.cliente}\n` +
               `🆔 ID: ${o._id}\n` +
-              `📅 Data: ${o.dataEvento}\n` +
+              `📅 Data: ${formatDate(o.dataEvento)}\n` +
               `⏰ Horário: ${o.horario}\n` +
               `🕒 Duração: ${o.duracao}\n` +
               `💰 Valor: R$ ${o.valorFinal}\n` +
@@ -975,19 +1003,16 @@ bot.on('text', async (ctx) => {
 
         await ctx.reply(
           '📌 Selecione o orçamento para editar o status:',
-          {
-            reply_markup: {
-              inline_keyboard: botoesOrcamentos
-            }
-          }
+          { reply_markup: { inline_keyboard: botoesOrcamentos } }
         );
 
       } catch (error) {
-        ctx.reply('❌ Erro ao buscar orçamento.');
         console.error(error);
+        ctx.reply('❌ Erro ao buscar orçamento.');
         userStates.delete(chatId);
       }
     }
+
   }
 
 
