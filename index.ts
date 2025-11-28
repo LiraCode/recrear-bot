@@ -1144,14 +1144,14 @@ async function enviarRelatorioMensal(chatId: number, mesAno: string) {
     // RECEITAS - pagamentos de orçamento usando a colletion orcamentos_pagamentos para pegar o pagamento de agendamentos tambem
     const pagamentosOrc = await db.collection('orcamentos_pagamentos').find({
       dataPagamento: { $gte: inicioMes, $lt: fimMes }
-    })
+    }).toArray();
 
     const receitaOrcamentos = pagamentosOrc.reduce((sum: number, o: any) => sum + o.valor, 0);
 
     // RECEITAS - Pacotes pagos
     const pacotesPagos = await db.collection('pagamentos').find({
       isPaid: true,
-      pagoEm: { $gte: inicioMes, $lt: fimMes }
+      DATA: { $gte: inicioMes, $lt: fimMes }
     }).toArray();
 
     const receitaPacotes = pacotesPagos.reduce((sum: number, p: any) => sum + p.valor, 0);
