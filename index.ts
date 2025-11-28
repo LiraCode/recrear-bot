@@ -1142,7 +1142,7 @@ async function enviarRelatorioMensal(chatId: number, mesAno: string) {
     const fimMes = new Date(parseInt(ano), parseInt(mes), 1);
 
     // RECEITAS - pagamentos de orçamento usando a colletion orcamentos_pagamentos para pegar o pagamento de agendamentos tambem
-    const receitaOrcamentosAgg = await db.collection('orcamentos_pagamentos').aggregate([
+    const PagamentosOrc = await db.collection('orcamentos_pagamentos').aggregate([
       {
         $match: {
           dataPagamento: { $gte: inicioMes, $lt: fimMes }
@@ -1156,14 +1156,14 @@ async function enviarRelatorioMensal(chatId: number, mesAno: string) {
       }
     ]).toArray();
     
-    const receitaOrcamentos = receitaOrcamentosAgg.length > 0 ? receitaOrcamentosAgg[0].total : 0;
+    const receitaOrcamentos = PagamentosOrc.length > 0 ? PagamentosOrc[0].total : 0;
 
     // RECEITAS - Pacotes pagos alterei o find para agregate
-    const receitaPacotesAgg = await db.collection('pagamentos').aggregate([
+    const pacotesPagos = await db.collection('pagamentos').aggregate([
       {
         $match: {
           isPaid: true,
-          DATA: { $gte: inicioMes, $lt: fimMes }
+          pagoEm: { $gte: inicioMes, $lt: fimMes }
         }
       },
       {
@@ -1174,7 +1174,7 @@ async function enviarRelatorioMensal(chatId: number, mesAno: string) {
       }
     ]).toArray();
     
-    const receitaPacotes = receitaPacotesAgg.length > 0 ? receitaPacotesAgg[0].total : 0;
+    const receitaPacotes = pacotesPagos.length > 0 ? pacotesPagos[0].total : 0;
 
     // soma das receitas 
     const receitaTotal = receitaOrcamentos + receitaPacotes;
