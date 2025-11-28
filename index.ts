@@ -171,7 +171,7 @@ function formatDate(date: any) {
     if (isNaN(d.getTime())) {
       // fallback se for string no formato DD/MM/AAAA
       const [dia, mes, ano] = String(date).split('/');
-      return `${dia.padStart(2,'0')}/${mes.padStart(2,'0')}/${ano}`;
+      return `${dia.padStart(2, '0')}/${mes.padStart(2, '0')}/${ano}`;
     }
     return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   } catch {
@@ -186,9 +186,9 @@ function parseDate(dateStr: string): Date {
 function escapeMarkdownV2(text: string) {
   if (!text) return '';
   return text.replace(/([_\[\]()~`>#+\-=|{}.!\\])/g, '\\$1')
-             .replace(/-/g, '\-')   // hífen
-             .replace(/\$/g, '\$')  // cifrão
-             .replace(/\//g, '\/'); // barra
+    .replace(/-/g, '\-')   // hífen
+    .replace(/\$/g, '\$')  // cifrão
+    .replace(/\//g, '\/'); // barra
 }
 // ==================== GOOGLE CALENDAR ====================
 async function createCalendarEvent(agendamento: Agendamento): Promise<string> {
@@ -305,7 +305,7 @@ bot.use(async (ctx, next) => {
 // ==================== COMANDOS - MENU PRINCIPAL ====================
 bot.command('start', (ctx) => {
   ctx.reply(
-    '🎉 \\*Bem-vindo ao Bot Recrear no Lar!*\n\n' +
+    '🎉 *Bem-vindo ao Bot Recrear no Lar!*\n\n' +
     'Use /ajuda para ver todos os comandos disponíveis.',
     { parse_mode: 'Markdown' }
   );
@@ -313,39 +313,39 @@ bot.command('start', (ctx) => {
 
 bot.command('ajuda', (ctx) => {
   const helpText = `
-📋 \\*COMANDOS DISPONÍVEIS\\*
+📋 *COMANDOS DISPONÍVEIS*
 
-💰 \\*PAGAMENTOS\\*
-/buscar\\_pagamento \\- Consultar pagamento
-/registrar\\_pagamento \\- Registrar pagamento de pacote
-/pagamentos\\_pendentes \\- Listar pacotes não pagos
+💰 *PAGAMENTOS*
+/buscar\\_pagamento - Consultar pagamento
+/registrar\\_pagamento - Registrar pagamento de pacote
+/pagamentos\\_pendentes - Listar pacotes não pagos
 
-📅 \\*AGENDAMENTOS\\*
-/criar\\_agendamento \\- Criar novo agendamento
-/listar\\_agendamentos \\- Ver agendamentos
-/editar\\_agendamento \\- Editar agendamento
-/cancelar\\_agendamento \\- Cancelar agendamento
-/mudar\\_status \\- Alterar status
+📅 *AGENDAMENTOS*
+/criar\\_agendamento - Criar novo agendamento
+/listar\\_agendamentos - Ver agendamentos
+/editar\\_agendamento - Editar agendamento
+/cancelar\\_agendamento - Cancelar agendamento
+/mudar\\_status - Alterar status
 
-💸 \\*DESPESAS\\*
-/adicionar\\_despesa \\- Registrar despesa
-/listar\\_despesas \\- Ver despesas
-/editar\\_despesa \\- Editar despesa
-/excluir\\_despesa \\- Remover despesa
-/total\\_despesas \\- Total por período
+💸 *DESPESAS*
+/adicionar\\_despesa - Registrar despesa
+/listar\\_despesas - Ver despesas
+/editar\\_despesa - Editar despesa
+/excluir\\_despesa - Remover despesa
+/total\\_despesas - Total por período
 
-📊 \\*ORÇAMENTOS\\*
-/criar\\_orcamento \\- Criar orçamento
-/listar\\_orcamentos \\- Ver orçamentos
-/editar\\_orcamento \\- Editar orçamento
-/mudar\\_status\\_orcamento \\- Alterar status
-/enviar\\_orcamento \\- Enviar link do orçamento
+📊 *ORÇAMENTOS*
+/criar\\_orcamento - Criar orçamento
+/listar\\_orcamentos - Ver orçamentos
+/editar\\_orcamento - Editar orçamento
+/status\\_orcamento - Alterar status
+/enviar\\_orcamento - Enviar link do orçamento
 
-📈 \\*RELATÓRIOS\\*
-/relatorio\\_mensal \\- Relatório de receitas/despesas
+📈 *RELATÓRIOS*
+/relatorio\\_mensal - Relatório de receitas/despesas
 
-🔧 \\*UTILITÁRIOS\\*
-/ajuda \\- Esta mensagem
+🔧 *UTILITÁRIOS*
+/ajuda - Esta mensagem
   `;
 
   ctx.reply(helpText, { parse_mode: 'Markdown' });
@@ -507,6 +507,14 @@ bot.command('enviar_orcamento', (ctx) => {
   userStates.set(chatId, { command: 'enviar_orcamento', step: 'buscar' });
   ctx.reply('🔍 Digite o nome do cliente para buscar o orçamento:');
 });
+
+bot.command('status_orcamento', (ctx) => {
+  const chatId = ctx.chat.id;
+  userStates.set(chatId, { command: 'status_orcamento', step: 'buscar' });
+  ctx.reply('🔍 Digite o nome do cliente para buscar o orçamento:');
+});
+
+// ==================== Relatórios ====================
 
 bot.command('relatorio_mensal', (ctx) => {
   const chatId = ctx.chat.id;
@@ -928,6 +936,61 @@ bot.on('text', async (ctx) => {
     }
   }
 
+  // ========== STATUS ORÇAMENTO ==========
+  if (state.command === 'status_orcamento') {
+    if (state.step === 'buscar') {
+      try {
+        const inicioDia = new Date(state.data.data);
+        inicioDia.setHours(0, 0, 0, 0);
+
+        const fimDia = new Date(state.data.data);
+        fimDia.setHours(23, 59, 59, 999);
+
+        const orcamentos = await db.collection('orcamentos').find({
+          cliente: { $regex: text, $options: 'i' },
+          dataEvento: { $gte: inicioDia, $lt: fimDia }
+        }).sort({ createdAt: -1 }).limit(5).toArray();
+
+        if (orcamentos.length === 0) {
+          ctx.reply('❌ Nenhum orçamento encontrado.');
+          userStates.delete(chatId);
+          return;
+        }
+
+        // Cria botões para cada orçamento encontrado
+        const botoesOrcamentos = orcamentos.map((o: Orcamento) => [
+          {
+            text:
+              `📄 Cliente: ${o.cliente}\n` +
+              `🆔 ID: ${o._id}\n` +
+              `📅 Data: ${o.dataEvento}\n` +
+              `⏰ Horário: ${o.horario}\n` +
+              `🕒 Duração: ${o.duracao}\n` +
+              `💰 Valor: R$ ${o.valorFinal}\n` +
+              `📌 Status: ${o.status}`,
+            callback_data: `editar_status:${o._id}`
+          }
+        ]);
+
+
+        await ctx.reply(
+          '📌 Selecione o orçamento para editar o status:',
+          {
+            reply_markup: {
+              inline_keyboard: botoesOrcamentos
+            }
+          }
+        );
+
+      } catch (error) {
+        ctx.reply('❌ Erro ao buscar orçamento.');
+        console.error(error);
+        userStates.delete(chatId);
+      }
+    }
+  }
+
+
   // ========== LISTAR AGENDAMENTOS - DATA ESPECÍFICA ==========
   if (state.command === 'listar_agendamentos') {
     if (state.step === 'data_especifica') {
@@ -1155,7 +1218,7 @@ async function enviarRelatorioMensal(chatId: number, mesAno: string) {
         }
       }
     ]).toArray();
-    
+
     const receitaOrcamentos = PagamentosOrc.length > 0 ? PagamentosOrc[0].total : 0;
 
     // RECEITAS - Pacotes pagos alterei o find para agregate
@@ -1173,7 +1236,7 @@ async function enviarRelatorioMensal(chatId: number, mesAno: string) {
         }
       }
     ]).toArray();
-    
+
     const receitaPacotes = pacotesPagos.length > 0 ? pacotesPagos[0].total : 0;
 
     // soma das receitas 
@@ -1458,6 +1521,50 @@ bot.action(/^orc_fds_(.+)$/, async (ctx) => {
   }
   await ctx.answerCbQuery();
 });
+
+// callbacks de orçamento - escolher status
+bot.action(/editar_status:(.+)/, async (ctx) => {
+  const orcamentoId = ctx.match[1];
+
+  // Botões de status
+  const botoesStatus = [
+    [{ text: '❌ Cancelado', callback_data: `status:${orcamentoId}:cancelado` }],
+    [{ text: '📝 Rascunho', callback_data: `status:${orcamentoId}:rascunho` }],
+    [{ text: '📤 Enviado', callback_data: `status:${orcamentoId}:enviado` }],
+    [{ text: '✅ Confirmado', callback_data: `status:${orcamentoId}:confirmado` }],
+    [{ text: '👍 Aprovado', callback_data: `status:${orcamentoId}:aprovado` }],
+    [{ text: '🏁 Concluído', callback_data: `status:${orcamentoId}:concluido` }]
+  ];
+
+  await ctx.reply(
+    '🔄 Escolha o novo status para este orçamento:',
+    {
+      reply_markup: {
+        inline_keyboard: botoesStatus
+      }
+    }
+  );
+});
+
+// callbacks orçamento - atualiza status orçamento
+bot.action(/status:(.+):(.+)/, async (ctx) => {
+  const orcamentoId = ctx.match[1];
+  const novoStatus = ctx.match[2];
+
+  try {
+    await db.collection('orcamentos').updateOne(
+      { _id: new ObjectId(orcamentoId) },
+      { $set: { status: novoStatus } }
+    );
+
+    await ctx.reply(`✅ Status do orçamento atualizado para *${novoStatus}*`, { parse_mode: 'Markdown' });
+  } catch (error) {
+    console.error(error);
+    await ctx.reply('❌ Erro ao atualizar status.');
+  }
+});
+
+
 
 // Callbacks de listagem de agendamentos
 bot.action(/^list_ag_(.+)$/, async (ctx) => {
